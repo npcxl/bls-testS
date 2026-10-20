@@ -49,6 +49,9 @@ pub struct AuthConfig {
     /// 登录请求体（由前端按手机号/展位等拼好）
     #[serde(default)]
     pub body: Option<Value>,
+    /// 直接注入 Cookie（如 "JSESSIONID=xxx"）：填了就跳过登录，直接带会话跑
+    #[serde(default)]
+    pub cookie: Option<String>,
     /// CPS27 免登 param（形如 CPS27EFORM_{CID}_{TIMEKEY}_{EQTIMEKEY}）：
     /// 传了就先走 GET /login/getBaseInfo?param=... 取展会/展位/公司，再登录
     #[serde(default)]
@@ -244,17 +247,45 @@ pub async fn init_and_run(
         return Err((StatusCode::BAD_GATEWAY, msg));
     }
 
-    // 登录：直接按前端两次调用完成（getBaseInfo → syncLogin），再把 token/机构注入全局头
+    // 认证：① 直接注入 Cookie（跳过登录） ② 否则按前端两次调用完成登录
     if let Some(auth) = &req.auth {
-        emit(
-            &state,
-            &run_id,
-            json!({
-                "type": "stage",
-                "stage": "auth_loading",
-                "message": "正在按前端入口完成登录（getBaseInfo → syncLogin）…"
-            }),
-        );
+        let injected_cookie = auth
+            .cookie
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        if let Some(cookie) = injected_cookie {
+            merged.global_headers.insert("Cookie".to_string(), cookie);
+            if let Some(extra) = &auth.extra_headers {
+                for (k, v) in extra {
+                    if !k.trim().is_empty() && !v.trim().is_empty() {
+                        merged.global_headers.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            emit(
+                &state,
+                &run_id,
+                json!({
+                    "type": "stage",
+                    "stage": "auth_cookie",
+                    "message": format!(
+                        "已注入 Cookie，跳过登录；请求头={:?}",
+                        merged.global_headers.keys().collect::<Vec<_>>()
+                    )
+                }),
+            );
+        } else {
+            emit(
+                &state,
+                &run_id,
+                json!({
+                    "type": "stage",
+                    "stage": "auth_loading",
+                    "message": "正在按前端入口完成登录（getBaseInfo → syncLogin）…"
+                }),
+            );
         match bootstrap_auth(&merged.base_url, auth).await {
             Ok(result) => {
                 let header_name = auth
@@ -274,6 +305,19 @@ pub async fn init_and_run(
                 if let Some(tenant) = result.tenant_id.clone() {
                     merged.global_headers.insert("tenant-id".to_string(), tenant);
                 }
+                // /home/** 真正认的是登录会话（JSESSIONID），只带 Authorization 会 401
+                if let Some(cookie) = result.cookie.clone() {
+                    merged.global_headers.insert("Cookie".to_string(), cookie);
+                }
+                let cookie_names = result
+                    .cookie
+                    .as_ref()
+                    .map(|c| {
+                        c.split(';')
+                            .filter_map(|p| p.split('=').next().map(|s| s.trim().to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 emit(
                     &state,
                     &run_id,
@@ -281,8 +325,11 @@ pub async fn init_and_run(
                         "type": "stage",
                         "stage": "auth_ok",
                         "message": format!(
-                            "登录成功，token 已注入（机构={:?}，租户={:?}）",
-                            result.agency_id, result.tenant_id
+                            "登录成功：机构={:?}，租户={:?}，会话 cookie={:?}，已注入请求头={:?}",
+                            result.agency_id,
+                            result.tenant_id,
+                            cookie_names,
+                            merged.global_headers.keys().collect::<Vec<_>>()
                         )
                     }),
                 );
@@ -290,6 +337,7 @@ pub async fn init_and_run(
             Err(e) => {
                 emit(&state, &run_id, json!({"type": "error", "message": e}));
                 return Err((StatusCode::BAD_GATEWAY, e));
+            }
             }
         }
     }
@@ -441,6 +489,29 @@ struct AuthResult {
     token: String,
     agency_id: Option<String>,
     tenant_id: Option<String>,
+    /// 登录过程中服务端下发的 Cookie（JSESSIONID 等）——/home/** 实际靠会话鉴权
+    cookie: Option<String>,
+}
+
+/// 从响应头收集 Set-Cookie，按 cookie 名去重后拼成 Cookie 头的值
+fn collect_cookies(resp: &reqwest::Response, store: &mut Vec<(String, String)>) {
+    for value in resp.headers().get_all(reqwest::header::SET_COOKIE) {
+        if let Ok(text) = value.to_str() {
+            if let Some(pair) = text.split(';').next() {
+                if let Some((name, val)) = pair.split_once('=') {
+                    let name = name.trim().to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if let Some(existing) = store.iter_mut().find(|(n, _)| n == &name) {
+                        existing.1 = val.trim().to_string();
+                    } else {
+                        store.push((name, val.trim().to_string()));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// 按「前端真实交互」完成登录，不依赖 JSONPath 模板：
@@ -466,19 +537,29 @@ async fn bootstrap_auth(base_url: &str, auth: &AuthConfig) -> Result<AuthResult,
 
     let base = base_url.trim_end_matches('/');
     let mut data = serde_json::Map::new();
+    let mut cookie_store: Vec<(String, String)> = Vec::new();
 
     // ① 免登入口：拿展商资料（含 agencyId/tenantId/cps27）
     if let Some(param) = auth
         .param
         .as_ref()
-        .map(|s| s.trim().to_string())
+        .map(|s| normalize_param(s))
         .filter(|s| !s.is_empty())
     {
         let exhibition_id = auth
             .exhibition_id
             .clone()
             .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("DEFAULT_EXHIBITION_ID").ok())
             .unwrap_or_default();
+        if exhibition_id.is_empty() {
+            return Err(
+                "缺少 exhibitionId：CPS27 链接里没有我方展会 id，请在「登录前置」里填写 exhibitionId\
+                 （测试环境示例：ec21dfb67eeb4669ace30802f6aa3aab，生产：2d23dcef69434999943c4f90faa54e4e）"
+                    .to_string(),
+            );
+        }
         let url = format!(
             "{}{}?param={}&exhibitionId={}",
             base,
@@ -497,6 +578,7 @@ async fn bootstrap_auth(base_url: &str, auth: &AuthConfig) -> Result<AuthResult,
             .await
             .map_err(|e| format!("免登入口请求失败: GET {} → {}", url, e))?;
         let status = resp.status();
+        collect_cookies(&resp, &mut cookie_store);
         let body: Value = resp
             .json()
             .await
@@ -519,10 +601,30 @@ async fn bootstrap_auth(base_url: &str, auth: &AuthConfig) -> Result<AuthResult,
         data.insert("param".to_string(), json!(param));
     }
 
-    // 合并前端填的字段（userPhone 等，覆盖同名键）
+    // 合并前端填的字段：只补空位，不覆盖免登返回的真实资料
+    // （手填的 exhibitionId/boothNo 可能与 param 冲突，覆盖会导致服务端匹配失败）
     if let Some(body) = auth.body.as_ref().and_then(|b| b.as_object()) {
         for (k, v) in body {
-            data.insert(k.clone(), v.clone());
+            let incoming_blank = match v {
+                Value::Null => true,
+                Value::String(s) => s.trim().is_empty(),
+                _ => false,
+            };
+            if incoming_blank {
+                continue;
+            }
+            match data.get(k) {
+                None => {
+                    data.insert(k.clone(), v.clone());
+                }
+                Some(existing) if existing.is_null() => {
+                    data.insert(k.clone(), v.clone());
+                }
+                Some(existing) if existing.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) => {
+                    data.insert(k.clone(), v.clone());
+                }
+                _ => {}
+            }
         }
     }
     let exhibition_id = auth
@@ -567,6 +669,7 @@ async fn bootstrap_auth(base_url: &str, auth: &AuthConfig) -> Result<AuthResult,
         .await
         .map_err(|e| format!("登录请求失败: POST {} → {}", login_url, e))?;
     let status = resp.status();
+    collect_cookies(&resp, &mut cookie_store);
     let body: Value = resp
         .json()
         .await
@@ -575,13 +678,14 @@ async fn bootstrap_auth(base_url: &str, auth: &AuthConfig) -> Result<AuthResult,
         let msg = body
             .get("msg")
             .and_then(|m| m.as_str())
-            .unwrap_or("未知错误");
+            .unwrap_or("响应里没有 msg 字段（可能是服务端异常）");
         return Err(format!(
-            "登录失败（POST {}）：{}；机构={:?}；请求体字段={:?}",
+            "登录失败（POST {}，HTTP {}）：{}；机构={:?}；响应={}",
             login_url,
+            status.as_u16(),
             msg,
             agency_id,
-            data.keys().cloned().collect::<Vec<_>>()
+            body.to_string().chars().take(500).collect::<String>()
         ));
     }
 
@@ -599,11 +703,44 @@ async fn bootstrap_auth(base_url: &str, auth: &AuthConfig) -> Result<AuthResult,
             body.to_string().chars().take(300).collect::<String>()
         ));
     }
+    let cookie = if cookie_store.is_empty() {
+        None
+    } else {
+        Some(
+            cookie_store
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    };
+
     Ok(AuthResult {
         token,
         agency_id,
         tenant_id,
+        cookie,
     })
+}
+
+/// 容错解析用户粘贴的 param：
+/// 支持整段 `param=CPS27...&ShowID=...`、完整 URL、或只贴值；统一取出 param 的值
+fn normalize_param(raw: &str) -> String {
+    let mut text = raw.trim().to_string();
+    // 允许直接粘贴完整链接
+    if let Some(idx) = text.find("param=") {
+        text = text[idx + "param=".len()..].to_string();
+    }
+    text = text
+        .trim_start_matches('?')
+        .trim_start_matches('&')
+        .to_string();
+    let value = text.split('&').next().unwrap_or("").trim().to_string();
+    if value.is_empty() {
+        text.trim().to_string()
+    } else {
+        value
+    }
 }
 
 /// 查询参数百分号编码（保留 unreserved 字符）

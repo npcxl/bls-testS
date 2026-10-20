@@ -217,11 +217,29 @@ impl PipelineRunner {
             merged_headers.insert(k.clone(), v.clone());
         }
 
+        // 「鉴权绕过」类用例要验证未登录行为，必须摘掉全局注入的登录态
+        let strip_auth = case.category.eq_ignore_ascii_case("AuthBypass")
+            || case
+                .expected_status_codes
+                .iter()
+                .any(|c| *c == 401 || *c == 403);
+
         for (k, v) in &merged_headers {
             let rendered = Self::render_template(v, vars);
             // 变量未解析（如还没配置登录前置步骤）或解析为空时不要把这个头发出去，
             // 否则会带上字面量 {{token}} / 空值干扰服务端判断
             if Self::has_unresolved_var(&rendered) || rendered.trim().is_empty() {
+                continue;
+            }
+            let is_auth_header =
+                k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("cookie");
+            if strip_auth
+                && is_auth_header
+                && !case
+                    .headers
+                    .keys()
+                    .any(|hk| hk.eq_ignore_ascii_case(k))
+            {
                 continue;
             }
             req = req.header(k, rendered);

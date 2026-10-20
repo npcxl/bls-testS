@@ -95,6 +95,74 @@ export interface AuthConfig {
   extra_headers?: Record<string, string>;
 }
 
+/** 认证方式：无 / 直接注入 Cookie / 登录前置 */
+export type TaskAuthMode = "none" | "cookie" | "login";
+
+export interface TaskLoginConfig {
+  param: string;
+  userPhone: string;
+  exhibitionId: string;
+  boothNo: string;
+  companyId: string;
+  agencyId: string;
+  tenantId: string;
+}
+
+/** 任务（一次自动化测试的完整生命周期） */
+export interface TestTaskConfig {
+  projectName: string;
+  baseUrl: string;
+  apiSpec: string;
+  prdText: string;
+  /** 认证方式（每个任务独立配置） */
+  authMode?: TaskAuthMode;
+  /** 直接注入的 Cookie（如 JSESSIONID=xxx），填了就跳过登录 */
+  cookie?: string;
+  /** 登录前置参数 */
+  login?: TaskLoginConfig;
+}
+
+/** 可复用的配置档案（新建任务时选择它） */
+export interface TestConfig extends TestTaskConfig {
+  id: string;
+  name: string;
+  updatedAt: string;
+}
+
+export type TestTaskStatus = "pending" | "running" | "done" | "failed";
+
+export interface TestTask {
+  id: string;
+  name: string;
+  status: TestTaskStatus;
+  createdAt: string;
+  finishedAt?: string;
+  /** 绑定的配置档案 id（快照仍保存在 config 里，配置后续修改不影响历史） */
+  configId?: string;
+  config: TestTaskConfig;
+  total?: number;
+  passed?: number;
+  failed?: number;
+  passRate?: string;
+  reportFile?: string | null;
+  markdown?: string;
+  error?: string;
+}
+
+/** 一次运行的历史记录（本地保存） */
+export interface RunHistoryItem {
+  id: string;
+  at: string;
+  projectName: string;
+  baseUrl: string;
+  total: number;
+  passed: number;
+  failed: number;
+  passRate: string;
+  reportFile?: string | null;
+  markdown: string;
+}
+
 /** SSE 事件（后端 /api/pipeline/events 推送） */
 export type PipelineEventType = "stage" | "cases" | "result" | "report" | "error";
 

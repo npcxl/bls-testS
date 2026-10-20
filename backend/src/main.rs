@@ -105,7 +105,7 @@ async fn main() {
                 Json(serde_json::json!({
                     "status": "ok",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "build": "2026-10-20-auth-bootstrap",
+                    "build": "2026-10-20-cookie-auth",
                     "features": [
                         "deepseek-frontend-config",
                         "pipeline-normalize",
