@@ -247,8 +247,26 @@ pub async fn init_and_run(
         return Err((StatusCode::BAD_GATEWAY, msg));
     }
 
+    apply_auth_headers(&mut merged, req.auth.as_ref(), &state, &run_id).await?;
+
+    // 预检：base_url 必须真的打到后端（避免打到 Apache/Nginx 的错误页，白跑几十个用例）
+    if let Err(e) = preflight_base_url(&merged.base_url).await {
+        emit(&state, &run_id, json!({"type": "error", "message": e}));
+        return Err((StatusCode::BAD_GATEWAY, e));
+    }
+
+    run_and_store(&state, run_id, merged, None).await
+}
+
+/// 把认证信息注入 pipeline 的全局请求头（Cookie 优先，否则走登录引导）
+async fn apply_auth_headers(
+    merged: &mut TestPipeline,
+    auth: Option<&AuthConfig>,
+    state: &AppState,
+    run_id: &str,
+) -> Result<(), ApiError> {
     // 认证：① 直接注入 Cookie（跳过登录） ② 否则按前端两次调用完成登录
-    if let Some(auth) = &req.auth {
+    if let Some(auth) = auth {
         let injected_cookie = auth
             .cookie
             .as_ref()
@@ -342,13 +360,7 @@ pub async fn init_and_run(
         }
     }
 
-    // 预检：base_url 必须真的打到后端（避免打到 Apache/Nginx 的错误页，白跑几十个用例）
-    if let Err(e) = preflight_base_url(&merged.base_url).await {
-        emit(&state, &run_id, json!({"type": "error", "message": e}));
-        return Err((StatusCode::BAD_GATEWAY, e));
-    }
-
-    run_and_store(&state, run_id, merged, None).await
+    Ok(())
 }
 
 /// 规范化 Base URL：缺协议自动补 http://，去掉尾部斜杠
@@ -1068,6 +1080,146 @@ fn resolve_run_id(value: &Option<String>) -> String {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
+
+/// 执行任务里已经生成好的反例（不调用 AI，不重新生成）
+#[derive(Debug, Deserialize)]
+pub struct ExecuteRequest {
+    pub pipeline: TestPipeline,
+    #[serde(default)]
+    pub auth: Option<AuthConfig>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+pub async fn execute(
+    State(state): State<AppState>,
+    Json(req): Json<ExecuteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let run_id = resolve_run_id(&req.run_id);
+    let mut merged = req.pipeline;
+
+    if merged.negative_cases.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "任务里还没有反例，请先让 AI 生成".to_string(),
+        ));
+    }
+    if merged.base_url.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "base_url 不能为空".to_string()));
+    }
+
+    let (base_url, fixed) = normalize_base_url(&merged.base_url);
+    merged.base_url = base_url;
+    if fixed {
+        emit(
+            &state,
+            &run_id,
+            json!({
+                "type": "stage",
+                "stage": "base_url_fixed",
+                "message": format!("Base URL 缺少协议前缀，已自动补全为 {}", merged.base_url)
+            }),
+        );
+    }
+
+    emit(
+        &state,
+        &run_id,
+        json!({
+            "type": "stage",
+            "stage": "executing_existing",
+            "message": format!("复用任务里的 {} 条反例执行（不重新生成）", merged.negative_cases.len())
+        }),
+    );
+    emit(
+        &state,
+        &run_id,
+        json!({
+            "type": "cases",
+            "payload": merged.negative_cases,
+            "partial": false,
+            "total_cases": merged.negative_cases.len()
+        }),
+    );
+
+    apply_auth_headers(&mut merged, req.auth.as_ref(), &state, &run_id).await?;
+
+    if let Err(e) = preflight_base_url(&merged.base_url).await {
+        emit(&state, &run_id, json!({"type": "error", "message": e}));
+        return Err((StatusCode::BAD_GATEWAY, e));
+    }
+
+    run_and_store(&state, run_id, merged, None).await
+}
+
+/// 用自然语言追加反例（只生成新增的，不重复已有）
+#[derive(Debug, Deserialize)]
+pub struct AppendCasesRequest {
+    pub instruction: String,
+    #[serde(default)]
+    pub api_spec: String,
+    #[serde(default)]
+    pub prd_content: String,
+    #[serde(default)]
+    pub existing_cases: Vec<NegativeTestCase>,
+    #[serde(default)]
+    pub deepseek: Option<DeepSeekConfig>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+pub async fn append_cases(
+    State(state): State<AppState>,
+    Json(req): Json<AppendCasesRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if req.instruction.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "追加描述不能为空".to_string()));
+    }
+    if req.api_spec.trim().is_empty() && req.prd_content.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "api_spec 与 prd_content 至少提供一个".to_string(),
+        ));
+    }
+
+    let run_id = resolve_run_id(&req.run_id);
+    emit(
+        &state,
+        &run_id,
+        json!({
+            "type": "stage",
+            "stage": "appending",
+            "message": "正在根据描述追加反例…"
+        }),
+    );
+
+    let ai = state.deepseek_for(&req.deepseek);
+    let added = ai
+        .append_negative_cases(
+            &req.existing_cases,
+            req.instruction.trim(),
+            &req.api_spec,
+            &req.prd_content,
+        )
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    emit(
+        &state,
+        &run_id,
+        json!({
+            "type": "stage",
+            "stage": "appended",
+            "message": format!("已追加 {} 条反例（共 {} 条）", added.len(), req.existing_cases.len() + added.len())
+        }),
+    );
+
+    Ok(Json(json!({
+        "added": added,
+        "total": req.existing_cases.len() + added.len(),
+    })))
 }
 
 fn emit(state: &AppState, run_id: &str, body: Value) {

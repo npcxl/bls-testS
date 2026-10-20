@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <title></title>
+  </head>
+  <!--
+    橡塑展付款信息邮件 V2：样式对齐前端 feePaySuccess 页面（src/plastic/addOrder/feePaySuccess.vue）。
+    全部内联样式 + 表格布局（邮件客户端兼容）；变量与 RemiteCodeMail_XSZ 完全一致（sendMsgToUser 的 map）。
+  -->
+  <body style="padding: 0; margin: 0; background-color: #f0f2f5; font-family: Arial, 'Microsoft YaHei', Helvetica, sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f0f2f5;">
+      <tr>
+        <td align="center" style="padding: 10px 0;">
+          <table width="800" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff;">
+            <!-- 标题栏：.fee_OfflinePayment_title{height:60px;line-height:60px;padding-left:20px} + .title_h1 + .red_block -->
+            <tr>
+              <td style="height: 60px; padding-left: 20px; vertical-align: middle; font-weight: bold; font-size: 18px; color: #222222;">
+                订单信息 Order information
+              </td>
+            </tr>
+            <tr>
+              <td style="padding-left: 20px;">
+                <div style="width: 40px; height: 2px; background-color: #d10100; font-size: 0; line-height: 0;">&nbsp;</div>
+              </td>
+            </tr>
+            <!-- .divider -->
+            <tr>
+              <td style="height: 1px; background-color: #dcdfe6; font-size: 0; line-height: 0;">&nbsp;</td>
+            </tr>
+            <!-- .fee_content{padding:30px 20px} -->
+            <tr>
+              <td style="padding: 30px 20px;">
+                <!-- .contact_information > div{margin-bottom:20px;color:#666;font-size:14px} 值 span #222 -->
+                <div style="margin-bottom: 20px; color: #666666; font-size: 14px;">请您尽快付款，以便订单及时处理！ Please make the payment as soon as possible to ensure your order is processed in a timely!</div>
+                <div style="margin-bottom: 20px; color: #666666; font-size: 14px;">订单号 Order No：<span style="color: #222222;">${orderNumber}</span></div>
+                <div style="margin-bottom: 20px; color: #666666; font-size: 14px;">联系人姓名 Contact：<span style="color: #222222;">${userName}</span></div>
+                <div style="margin-bottom: 20px; color: #666666; font-size: 14px;">联系电话 Tel：<span style="color: #222222;">${phone}</span></div>
+                <div style="margin-bottom: 20px; color: #666666; font-size: 14px;">支付方式 Payment Method：<span style="color: #222222;">${tradeWayName} Bank Transfer</span></div>
+
+                <!-- .total_money{margin:30px 0;font-size:18px;color:#222} 金额 .redColor 加粗 -->
+                <div style="margin: 30px 0; font-size: 18px; color: #222222;">
+                  应付金额 Amount Payable：<span style="font-weight: bold; color: #d10100;">￥${amount?string('0.00')}</span>
+                </div>
+                <!-- .hr{margin:30px 0;height:1px;background:#ccc} -->
+                <div style="height: 1px; background-color: #cccccc; font-size: 0; line-height: 0;">&nbsp;</div>
+                <div style="margin: 30px 0; font-size: 18px; color: #222222;">汇款信息 Remittance Information</div>
+
+                <div style="margin-bottom: 20px; color: #666666; font-size: 14px;">
+                  <div style="margin-bottom: 20px; font-weight: bold; color: #666666;">汇款截止时间 Remittance Deadline: <span style="color: #222222;">${cancelDate}</span></div>
+                  <div style="margin-bottom: 20px; color: #666666;">汇款账号信息 Remittance Account Information</div>
+                  <!-- .table：标题列灰底 rgb(237,240,244)，内容列 420px，行高 50px，边框 1px #ccc -->
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                    <tr>
+                      <td width="45%" style="background-color: #edf0f4; border: 1px solid #cccccc; border-bottom: none; height: 50px; padding: 0 20px; vertical-align: middle;">
+                        <div style="color: #222222; font-size: 14px;">开户单位</div>
+                        <div style="color: #222222; font-size: 14px;">Account Name:</div>
+                      </td>
+                      <td style="border: 1px solid #cccccc; border-bottom: none; height: 50px; padding: 0 20px; vertical-align: middle; font-size: 16px; color: #222222;">${remittanceUnit}</td>
+                    </tr>
+                    <tr>
+                      <td style="background-color: #edf0f4; border: 1px solid #cccccc; border-bottom: none; height: 50px; padding: 0 20px; vertical-align: middle;">
+                        <div style="color: #222222; font-size: 14px;">开户行</div>
+                        <div style="color: #222222; font-size: 14px;">Bank Name:</div>
+                      </td>
+                      <td style="border: 1px solid #cccccc; border-bottom: none; height: 50px; padding: 0 20px; vertical-align: middle; font-size: 16px; color: #222222;">${remittanceBank}</td>
+                    </tr>
+                    <tr>
+                      <td style="background-color: #edf0f4; border: 1px solid #cccccc; border-bottom: none; height: 50px; padding: 0 20px; vertical-align: middle;">
+                        <div style="color: #222222; font-size: 14px;">银行账户</div>
+                        <div style="color: #222222; font-size: 14px;">Account No:</div>
+                      </td>
+                      <td style="border: 1px solid #cccccc; border-bottom: none; height: 50px; padding: 0 20px; vertical-align: middle; font-size: 16px; color: #222222;">${remittanceAccount}</td>
+                    </tr>
+                    <tr>
+                      <td style="background-color: #edf0f4; border: 1px solid #cccccc; height: 50px; padding: 0 20px; vertical-align: middle;">
+                        <div style="color: #222222; font-size: 14px;">付款识别码</div>
+                        <div style="color: #222222; font-size: 14px;">Payment Identification Code:</div>
+                      </td>
+                      <td style="border: 1px solid #cccccc; height: 50px; padding: 0 20px; vertical-align: middle; font-size: 16px; color: #d10100;">${remitCode}</td>
+                    </tr>
+                  </table>
+                </div>
+
+                <!-- 页面 .redColor 下划线提示 -->
+                <div style="margin: 20px 0; color: #d10100; font-size: 14px; text-decoration: underline;">
+                  请将付款识别码填写到汇款单附言栏 Please write the payment identification code on the remarks section of the remittance form.
+                </div>
+
+                <!-- .foot-text{row-gap:8px} .text-bold 第2条 -->
+                <div style="color: #666666; font-size: 14px;">
+                  <div style="margin-bottom: 8px;">重要须知 Important Instructions:</div>
+                  <div style="margin-bottom: 8px;">
+                    <div>1、请确保所汇款项金额与应付金额完全一致，请勿多汇款或者少汇款。</div>
+                    <div>Please ensure that the amount remitted is exactly the same as the amount due; do not overpay or underpay.</div>
+                  </div>
+                  <div style="margin-bottom: 8px; font-weight: bold;">
+                    <div>2、请务必在规定时间内完成款项支付，订单超过载止时间未付款，将会逾期自动失效。</div>
+                    <div>Please complete the payment within the specified time. If the order is not paid within the deadline, it will automatically expire.</div>
+                  </div>
+                  <div style="margin-bottom: 8px;">
+                    <div>3、本次订单的付款识别码将会发送至你所填报的手机号码 (仅限中国大陆号码 )及邮箱，请您注意查收，在进行汇款时，请将订单内提供的识別码准确填写在汇款单的【附言】栏内(仅填写此识别码)，如未填写识别码，将会影响订单收款。</div>
+                    <div>The payment identification code for this order will be sent to the mobile phone number you provided via SMS (for Chinese mainland mobile only) and your email address. Please check your messages. When making the remittance, please accurately write the identification code provided in the order in the【Remarks】section of the remittance form (only write this identification code). Failure to write the identification code may affect the receipt of the order payment.</div>
+                  </div>
+                  <div style="margin-bottom: 8px;">
+                    <div>4、款项到账通常需1-3个工作日，在完成汇款后的五个工作日内，若您的系统订单状态未更新为“已支付”，请务必联系工作人员 <span style="color: #d10100;">${contactPhone}</span> 进行确认。若“未支付”状态的订单，在规定的时间内未完成支付且未与我司工作人员取得联系，该订单将一律视为无效，需重新下单，对于此类无效订单，我司将不承担任何责任。请您确保及时跟进订单状态，以确保您的订单得以有效处理。</div>
+                    <div>Funds typically arrive within 1 to 3 working days. If your system order status has not been updated to "Paid" within 5 working days after the remittance, please contact the staff at <span style="color: #d10100;">${contactPhone}</span> for confirmation. If an order with a "Unpaid" status is not paid within the specified time and no contact is made with our staff, the order will be considered invalid and will need to be placed again. For such invalid orders, our company will not assume any responsibility. Please ensure to follow up on the order status in a timely manner to ensure your order is processed effectively.</div>
+                  </div>
+                  <div style="margin-bottom: 8px;">
+                    <div>5、我司不会以订单无效、订单异常、系统升级等名义发送短信或链接要求您提供银行卡及验证码信息。请您保持警惕，防范诈骗。</div>
+                    <div>Any SMS or links asking for your bank card and verification code information under the guise of order invalidity, order exceptions, or system upgrades are false. Please remain vigilant and guard against fraud.</div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

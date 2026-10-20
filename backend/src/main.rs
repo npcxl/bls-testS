@@ -123,6 +123,11 @@ async fn main() {
             "/api/pipeline/chat-refine-and-run",
             post(api::pipeline::chat_refine_and_run),
         )
+        .route("/api/pipeline/execute", post(api::pipeline::execute))
+        .route(
+            "/api/pipeline/append-cases",
+            post(api::pipeline::append_cases),
+        )
         .route("/api/pipeline/current", get(api::pipeline::current))
         .route("/api/pipeline/report", get(api::pipeline::report))
         .route(

@@ -23,6 +23,18 @@ pub struct CaseExecutionResult {
     pub failure_reason: Option<String>,
     pub curl_reproduce: String,
     pub response_snippet: String,
+    /// 实际发出的请求头（已渲染变量）
+    #[serde(default)]
+    pub request_headers: HashMap<String, String>,
+    /// 实际发出的请求体
+    #[serde(default)]
+    pub request_body: Option<Value>,
+    /// 完整响应体（截断到 8KB，供详情面板展示）
+    #[serde(default)]
+    pub response_body: String,
+    /// 实际请求次数（含重试）
+    #[serde(default)]
+    pub attempts: u32,
 }
 
 pub struct PipelineRunner {
@@ -208,26 +220,27 @@ impl PipelineRunner {
                 )),
                 curl_reproduce: format!("curl -X {} '{}'", raw_method, url),
                 response_snippet: String::new(),
+                request_headers: HashMap::new(),
+                request_body: case.body.clone(),
+                response_body: String::new(),
+                attempts: 0,
             };
         }
 
-        let mut req = client.request(method.clone(), &url);
+        // 组装要发送的请求头（渲染变量、剔除未解析/空值；AuthBypass 摘掉登录态）
         let mut merged_headers = global_headers.clone();
         for (k, v) in &case.headers {
             merged_headers.insert(k.clone(), v.clone());
         }
-
-        // 「鉴权绕过」类用例要验证未登录行为，必须摘掉全局注入的登录态
         let strip_auth = case.category.eq_ignore_ascii_case("AuthBypass")
             || case
                 .expected_status_codes
                 .iter()
                 .any(|c| *c == 401 || *c == 403);
 
+        let mut send_headers: Vec<(String, String)> = Vec::new();
         for (k, v) in &merged_headers {
             let rendered = Self::render_template(v, vars);
-            // 变量未解析（如还没配置登录前置步骤）或解析为空时不要把这个头发出去，
-            // 否则会带上字面量 {{token}} / 空值干扰服务端判断
             if Self::has_unresolved_var(&rendered) || rendered.trim().is_empty() {
                 continue;
             }
@@ -235,94 +248,134 @@ impl PipelineRunner {
                 k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("cookie");
             if strip_auth
                 && is_auth_header
-                && !case
-                    .headers
-                    .keys()
-                    .any(|hk| hk.eq_ignore_ascii_case(k))
+                && !case.headers.keys().any(|hk| hk.eq_ignore_ascii_case(k))
             {
                 continue;
             }
-            req = req.header(k, rendered);
+            send_headers.push((k.clone(), rendered));
         }
+        let request_headers: HashMap<String, String> = send_headers.iter().cloned().collect();
 
         let rendered_body = case.body.as_ref().map(|b| {
             let s = Self::render_template(&b.to_string(), vars);
             serde_json::from_str::<Value>(&s).unwrap_or_else(|_| b.clone())
         });
-
-        // GET/HEAD 不带请求体（模型常给 body: {}）
         let allows_body = !matches!(method, Method::GET | Method::HEAD);
-        if allows_body {
-            if let Some(ref b) = rendered_body {
+        let request_body = if allows_body { rendered_body.clone() } else { None };
+
+        let curl_cmd =
+            Self::build_curl(method.as_str(), &url, &merged_headers, &rendered_body, vars);
+
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut attempts: u32 = 0;
+        let mut last_error = String::new();
+
+        while attempts < MAX_ATTEMPTS {
+            attempts += 1;
+            let mut req = client.request(method.clone(), &url);
+            for (k, v) in &send_headers {
+                req = req.header(k, v);
+            }
+            if let Some(ref b) = request_body {
                 req = req.json(b);
+            }
+
+            let start = Instant::now();
+            match req.send().await {
+                Ok(resp) => {
+                    let duration_ms = start.elapsed().as_millis();
+                    let status = resp.status().as_u16();
+                    let body_text = resp.text().await.unwrap_or_default();
+
+                    // 5xx 视为服务端异常，自动重试（最多 MAX_ATTEMPTS 次）
+                    if status >= 500 && attempts < MAX_ATTEMPTS {
+                        last_error = format!("HTTP {}", status);
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            300 * attempts as u64,
+                        ))
+                        .await;
+                        continue;
+                    }
+
+                    let snippet: String = body_text.chars().take(300).collect();
+                    let full_body: String = body_text.chars().take(8000).collect();
+
+                    let is_server_crash = status >= 500;
+                    let status_matched = if case.expected_status_codes.is_empty() {
+                        (400..500).contains(&status)
+                    } else {
+                        case.expected_status_codes.contains(&status)
+                    };
+                    let business_rejected =
+                        status == 200 && Self::body_is_business_error(&body_text);
+                    let passed = !is_server_crash && (status_matched || business_rejected);
+
+                    let failure_reason = if is_server_crash {
+                        Some(format!(
+                            "严重缺陷：反例触发服务端 5xx 崩溃 (HTTP {})",
+                            status
+                        ))
+                    } else if !status_matched && !business_rejected {
+                        Some(format!(
+                            "未按预期拦截：预期状态码 {:?}，实际返回 HTTP {}，响应中也无业务错误码",
+                            case.expected_status_codes, status
+                        ))
+                    } else {
+                        None
+                    };
+
+                    return CaseExecutionResult {
+                        case_id: case.case_id.clone(),
+                        category: case.category.clone(),
+                        title: case.title.clone(),
+                        method: case.method.clone(),
+                        url,
+                        actual_status: status,
+                        expected_status_codes: case.expected_status_codes.clone(),
+                        duration_ms,
+                        passed,
+                        failure_reason,
+                        curl_reproduce: curl_cmd,
+                        response_snippet: snippet,
+                        request_headers: request_headers.clone(),
+                        request_body: request_body.clone(),
+                        response_body: full_body,
+                        attempts,
+                    };
+                }
+                Err(e) => {
+                    last_error = format!("{}", e);
+                    if attempts < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            300 * attempts as u64,
+                        ))
+                        .await;
+                        continue;
+                    }
+                }
             }
         }
 
-        let start = Instant::now();
-        let resp_result = req.send().await;
-        let duration_ms = start.elapsed().as_millis();
-
-        let curl_cmd = Self::build_curl(method.as_str(), &url, &merged_headers, &rendered_body, vars);
-
-        match resp_result {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                let body_text = resp.text().await.unwrap_or_default();
-                let snippet: String = body_text.chars().take(300).collect();
-
-                // 三层断言：
-                // 1. 严禁 5xx 服务端崩溃；
-                // 2. 状态码命中预期；
-                // 3. 兼容「HTTP 200 + 业务错误码」风格（ehs 的接口就是这种），同样算被正确拦截
-                let is_server_crash = status >= 500;
-                let status_matched = if case.expected_status_codes.is_empty() {
-                    (400..500).contains(&status)
-                } else {
-                    case.expected_status_codes.contains(&status)
-                };
-                let business_rejected = status == 200 && Self::body_is_business_error(&body_text);
-                let passed = !is_server_crash && (status_matched || business_rejected);
-
-                let failure_reason = if is_server_crash {
-                    Some(format!("严重缺陷：反例触发服务端 5xx 崩溃 (HTTP {})", status))
-                } else if !status_matched && !business_rejected {
-                    Some(format!(
-                        "未按预期拦截：预期状态码 {:?}，实际返回 HTTP {}，响应中也无业务错误码",
-                        case.expected_status_codes, status
-                    ))
-                } else {
-                    None
-                };
-
-                CaseExecutionResult {
-                    case_id: case.case_id.clone(),
-                    category: case.category.clone(),
-                    title: case.title.clone(),
-                    method: case.method.clone(),
-                    url,
-                    actual_status: status,
-                    expected_status_codes: case.expected_status_codes.clone(),
-                    duration_ms,
-                    passed,
-                    failure_reason,
-                    curl_reproduce: curl_cmd,
-                    response_snippet: snippet,
-                }
-            }
-            Err(e) => CaseExecutionResult {
-                case_id: case.case_id.clone(),
-                category: case.category.clone(),
-                title: case.title.clone(),
-                method: case.method.clone(),
-                url,
-                actual_status: 0,
-                expected_status_codes: case.expected_status_codes.clone(),
-                duration_ms,
-                passed: false,
-                failure_reason: Some(format!("网络或超时异常: {}", e)),
-                curl_reproduce: curl_cmd,
-                response_snippet: String::new(),
-            },
+        CaseExecutionResult {
+            case_id: case.case_id.clone(),
+            category: case.category.clone(),
+            title: case.title.clone(),
+            method: case.method.clone(),
+            url,
+            actual_status: 0,
+            expected_status_codes: case.expected_status_codes.clone(),
+            duration_ms: 0,
+            passed: false,
+            failure_reason: Some(format!(
+                "网络或超时异常（共尝试 {} 次）: {}",
+                attempts, last_error
+            )),
+            curl_reproduce: curl_cmd,
+            response_snippet: String::new(),
+            request_headers,
+            request_body,
+            response_body: String::new(),
+            attempts,
         }
     }
 

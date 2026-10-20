@@ -2,6 +2,8 @@ import type {
   AuthConfig,
   DeepSeekConfig,
   InitAndRunResponse,
+  NegativeTestCase,
+  TestPipeline,
 } from "../types/pipeline";
 
 const API_BASE =
@@ -32,6 +34,30 @@ export function initAndRun(payload: {
   run_id?: string;
 }) {
   return postJson<InitAndRunResponse>("/api/pipeline/init-and-run", payload);
+}
+
+/** 执行任务里已有的反例（不调用 AI，不重新生成） */
+export function executePipeline(payload: {
+  pipeline: TestPipeline;
+  auth?: AuthConfig;
+  run_id?: string;
+}) {
+  return postJson<InitAndRunResponse>("/api/pipeline/execute", payload);
+}
+
+/** 追加反例：只生成新增用例，不重复已有 */
+export function appendCases(payload: {
+  instruction: string;
+  api_spec?: string;
+  prd_content?: string;
+  existing_cases: NegativeTestCase[];
+  deepseek?: DeepSeekConfig;
+  run_id?: string;
+}) {
+  return postJson<{ added: NegativeTestCase[]; total: number }>(
+    "/api/pipeline/append-cases",
+    payload
+  );
 }
 
 /** 追问：自然语言指令 → 更新流水线并重跑 */

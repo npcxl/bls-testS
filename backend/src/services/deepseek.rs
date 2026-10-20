@@ -334,3 +334,89 @@ fn parse_pipeline(value: Value) -> Result<TestPipeline, String> {
         format!("解析测试流水线失败: {} | 归一化后内容(截断): {}", e, s)
     })
 }
+
+impl DeepSeekService {
+    /// 追加反例：根据用户描述，在已有反例基础上只生成**新增**的用例
+    pub async fn append_negative_cases(
+        &self,
+        existing: &[crate::models::pipeline::NegativeTestCase],
+        instruction: &str,
+        api_spec: &str,
+        prd_content: &str,
+    ) -> Result<Vec<crate::models::pipeline::NegativeTestCase>, String> {
+        // 已有用例摘要（路径 + 分类 + 标题），用于去重
+        let existing_brief: Vec<String> = existing
+            .iter()
+            .take(80)
+            .map(|c| {
+                format!(
+                    "{} {} | {} | {}",
+                    c.method, c.path, c.category, c.title
+                )
+            })
+            .collect();
+
+        let system_prompt = r#"你是一名资深 API 安全与自动化测试架构师。
+用户已经有一批反例用例，现在要求你**只追加新的反例**。
+规则：
+1. 不要重复已有用例（相同 path + category + 语义相同的 title 视为重复）。
+2. 新增用例必须落在接口定义里真实存在的接口上。
+3. 严格输出合法 JSON：{"negative_cases": [ ... ]}，字段与已有用例一致：
+   case_id, req_id, category, title, method, path, headers, query_params, body,
+   expected_status_codes, mutation_dimension, is_mutation_rule。
+4. category 只能用：MissingField / InvalidType / BoundaryOverflow / NullValue / SecurityInjection / BusinessLogicViolation / AuthBypass。
+5. 最多 8 条，宁缺毋滥，不要输出任何解释文字或 Markdown 代码块。"#;
+
+        let user_prompt = format!(
+            "【接口定义 API JSON】
+{}
+
+【产品需求文档 PRD】
+{}
+
+【已有反例（不要重复）】
+{}
+
+【追加要求】
+{}",
+            api_spec,
+            prd_content,
+            if existing_brief.is_empty() {
+                "（暂无）".to_string()
+            } else {
+                existing_brief.join("
+")
+            },
+            instruction
+        );
+
+        let value = self.call_json_value(system_prompt, &user_prompt).await?;
+
+        let list = value
+            .get("negative_cases")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut added: Vec<crate::models::pipeline::NegativeTestCase> = Vec::new();
+        for (idx, item) in list.into_iter().enumerate() {
+            let mut case: crate::models::pipeline::NegativeTestCase =
+                match serde_json::from_value(item) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+            if case.case_id.trim().is_empty() {
+                case.case_id = format!("NC-ADD-{:03}", idx + 1);
+            }
+            if case.method.trim().is_empty() {
+                case.method = if case.body.is_some() {
+                    "POST".to_string()
+                } else {
+                    "GET".to_string()
+                };
+            }
+            added.push(case);
+        }
+        Ok(added)
+    }
+}

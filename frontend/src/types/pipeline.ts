@@ -54,6 +54,14 @@ export interface CaseExecutionResult {
   failure_reason?: string;
   curl_reproduce: string;
   response_snippet: string;
+  /** 实际发出的请求头 */
+  request_headers?: Record<string, string>;
+  /** 实际发出的请求体 */
+  request_body?: unknown;
+  /** 完整响应体（后端截断到 8KB） */
+  response_body?: string;
+  /** 实际请求次数（含重试） */
+  attempts?: number;
 }
 
 export interface InitAndRunResponse {
@@ -140,6 +148,8 @@ export interface TestTask {
   /** 绑定的配置档案 id（快照仍保存在 config 里，配置后续修改不影响历史） */
   configId?: string;
   config: TestTaskConfig;
+  /** 任务已生成的反例（只生成一次，重跑直接复用；可追加） */
+  cases?: NegativeTestCase[];
   total?: number;
   passed?: number;
   failed?: number;
