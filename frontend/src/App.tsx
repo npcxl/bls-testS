@@ -74,20 +74,27 @@ export default function AutoTestWorkbench() {
   }, [cases]);
 
   // 本次结果优先；历史任务（已刷新）回退到任务记录
+  const total = results.length;
   const passed =
-    results.length > 0 ? results.filter((r) => r.passed).length : activeTask?.passed || 0;
+    total > 0 ? results.filter((r) => r.passed).length : activeTask?.passed || 0;
+  // 优先使用后端显式结论；老数据回退到按 401 推断
   const authBlocked =
-    results.length > 0
+    total > 0
       ? results.filter(
           (r) =>
-            !r.passed &&
-            r.actual_status === 401 &&
-            (categoryOf.get(r.case_id) || "").toLowerCase() !== "authbypass"
+            r.outcome === "blocked" ||
+            (!r.outcome &&
+              !r.passed &&
+              r.actual_status === 401 &&
+              (categoryOf.get(r.case_id) || "").toLowerCase() !== "authbypass")
         ).length
       : 0;
+  const errored =
+    total > 0 ? results.filter((r) => r.outcome === "error").length : 0;
   const failed =
-    results.length > 0
-      ? results.length - passed - authBlocked
+    total > 0
+      ? results.filter((r) => !r.passed && r.outcome !== "blocked" && r.outcome !== "error")
+          .length
       : Math.max((activeTask?.failed || 0) - authBlocked, 0);
 
   const elapsed =

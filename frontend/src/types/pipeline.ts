@@ -32,6 +32,8 @@ export interface NegativeTestCase {
   expected_error_hint: string;
   /** 用例类型：negative（反例，默认）/ positive（正例，正常请求应成功） */
   case_type?: "negative" | "positive";
+  /** 认证模式：inherit（沿用登录态）/ none（匿名） */
+  auth_mode?: "inherit" | "none";
 }
 
 export interface TestPipeline {
@@ -64,6 +66,8 @@ export interface CaseExecutionResult {
   response_body?: string;
   /** 用例类型 */
   case_type?: string;
+  /** 结论：passed / failed / blocked / error / inconclusive */
+  outcome?: "passed" | "failed" | "blocked" | "error" | "inconclusive";
   /** 实际请求次数（含重试） */
   attempts?: number;
 }

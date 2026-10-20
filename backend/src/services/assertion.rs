@@ -185,3 +185,78 @@ pub fn evaluate(
         )),
     )
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::pipeline::NegativeTestCase;
+
+    fn case(kind: &str, category: &str, expected: Vec<u16>) -> NegativeTestCase {
+        NegativeTestCase {
+            case_id: "T-1".into(),
+            req_id: "".into(),
+            category: category.into(),
+            title: "t".into(),
+            method: "POST".into(),
+            path: "/x".into(),
+            headers: Default::default(),
+            query_params: Default::default(),
+            body: None,
+            expected_status_codes: expected,
+            expected_error_hint: "".into(),
+            case_type: kind.into(),
+            auth_mode: "".into(),
+        }
+    }
+
+    // T02：反例预期业务失败，实际 200 + 成功码 → failed
+    #[test]
+    fn negative_with_success_body_must_fail() {
+        let c = case("negative", "MissingField", vec![200]);
+        let (outcome, _) = evaluate(&c, 200, r#"{"code":0,"msg":"ok"}"#, false);
+        assert_eq!(outcome, Outcome::Failed);
+    }
+
+    // T03：缺字段用例收到登录失效业务码，不得 passed
+    #[test]
+    fn negative_blocked_by_auth_must_not_pass() {
+        let c = case("negative", "MissingField", vec![400]);
+        let (outcome, _) = evaluate(&c, 401, r#"{"code":401,"msg":"未登录"}"#, false);
+        assert_eq!(outcome, Outcome::Blocked);
+    }
+
+    // T04：400/422 + 业务错误码 → passed
+    #[test]
+    fn negative_with_validation_error_passes() {
+        let c = case("negative", "MissingField", vec![400, 422]);
+        let (outcome, _) = evaluate(&c, 422, r#"{"code":42201,"msg":"field required"}"#, true);
+        assert_eq!(outcome, Outcome::Passed);
+    }
+
+    // 200 风格：必须出现业务错误码
+    #[test]
+    fn negative_200_without_business_code_is_inconclusive() {
+        let c = case("negative", "MissingField", vec![200]);
+        let (outcome, _) = evaluate(&c, 200, "plain text", true);
+        assert_eq!(outcome, Outcome::Inconclusive);
+    }
+
+    // 正例成功 / 被业务拒绝
+    #[test]
+    fn positive_success_and_business_reject() {
+        let c = case("positive", "MissingField", vec![200]);
+        let (ok, _) = evaluate(&c, 200, r#"{"code":0}"#, true);
+        assert_eq!(ok, Outcome::Passed);
+        let (bad, _) = evaluate(&c, 200, r#"{"code":1,"msg":"no"}"#, true);
+        assert_eq!(bad, Outcome::Failed);
+    }
+
+    // 正例被鉴权拦截 → blocked
+    #[test]
+    fn positive_blocked_by_auth() {
+        let c = case("positive", "MissingField", vec![200]);
+        let (outcome, _) = evaluate(&c, 401, r#"{"code":401}"#, true);
+        assert_eq!(outcome, Outcome::Blocked);
+    }
+}

@@ -118,12 +118,17 @@ async fn main() {
                 Json(serde_json::json!({
                     "status": "ok",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "build": "2026-10-20-cookie-auth",
+                    "build": "2026-10-20-phaseA",
                     "features": [
                         "deepseek-frontend-config",
                         "pipeline-normalize",
                         "md-report-file",
-                        "sse-events"
+                        "sse-events",
+                        "explicit-outcome",
+                        "auth-isolation",
+                        "single-active-run",
+                        "sqlite-store",
+                        "positive-and-negative"
                     ]
                 }))
             }),

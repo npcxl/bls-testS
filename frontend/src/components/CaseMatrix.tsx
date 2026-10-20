@@ -7,7 +7,13 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 
-type CaseState = "pending" | "passed" | "failed" | "auth_blocked";
+type CaseState =
+  | "pending"
+  | "passed"
+  | "failed"
+  | "auth_blocked"
+  | "error"
+  | "inconclusive";
 
 const FILTER_POSITIVE = "POSITIVE";
 
@@ -20,6 +26,16 @@ function resolveState(
   r?: CaseExecutionResult
 ): { state: CaseState; reason?: string } {
   if (!r) return { state: "pending" };
+  // 后端已给出显式结论，优先使用（阶段 A：不再靠状态码猜）
+  if (r.outcome === "blocked") {
+    return { state: "auth_blocked", reason: r.failure_reason || undefined };
+  }
+  if (r.outcome === "error") {
+    return { state: "error", reason: r.failure_reason || undefined };
+  }
+  if (r.outcome === "inconclusive") {
+    return { state: "inconclusive", reason: r.failure_reason || undefined };
+  }
   if (r.passed) return { state: "passed" };
   const isAuthBypass = (c.category || "").toLowerCase() === "authbypass";
   if (r.actual_status === 401 && !isAuthBypass && !isPositive(c)) {
@@ -32,6 +48,11 @@ const STATE_META: Record<CaseState, { text: string; cls: string }> = {
   passed: { text: "PASS", cls: "border-emerald-200 bg-emerald-50 text-emerald-700" },
   auth_blocked: { text: "401 阻断", cls: "border-amber-200 bg-amber-50 text-amber-700" },
   failed: { text: "FAIL 缺陷", cls: "border-rose-200 bg-rose-50 text-rose-700" },
+  error: { text: "ERROR", cls: "border-slate-300 bg-slate-100 text-slate-700" },
+  inconclusive: {
+    text: "无法判定",
+    cls: "border-sky-200 bg-sky-50 text-sky-700",
+  },
   pending: { text: "待执行", cls: "border-border bg-secondary text-muted-foreground" },
 };
 
@@ -269,6 +290,10 @@ export function CaseMatrix({
                       ? "bg-amber-50/80 border-amber-200 text-amber-900"
                       : state.state === "pending"
                       ? "bg-secondary border-border text-foreground"
+                      : state.state === "error"
+                      ? "bg-slate-50 border-border text-foreground"
+                      : state.state === "inconclusive"
+                      ? "bg-sky-50/80 border-sky-200 text-sky-900"
                       : "bg-rose-50/80 border-rose-200 text-rose-900"
                   }`}
                 >
@@ -276,9 +301,13 @@ export function CaseMatrix({
                     {state.state === "passed"
                       ? "✅ 用例通过（行为符合预期）"
                       : state.state === "auth_blocked"
-                      ? "🔒 尚未测到业务逻辑（被 401 登录鉴权拦截）"
+                      ? "🔒 前置阻断（登录态/权限不满足，未触达业务规则）"
                       : state.state === "pending"
                       ? "⏳ 尚未执行"
+                      : state.state === "error"
+                      ? "⚠️ 执行异常（网络/超时/响应读取失败）"
+                      : state.state === "inconclusive"
+                      ? "❔ 无法判定（响应体缺少可判定的业务码）"
                       : "🚨 捕获缺陷（结果与预期不符）"}
                   </div>
                   <div className="text-[11px] leading-relaxed opacity-90">
