@@ -6,12 +6,23 @@ import { RunView, type CenterTab } from "./components/RunView";
 import { ConfigView } from "./components/ConfigView";
 import { SettingsView } from "./components/SettingsView";
 import { AuthModal } from "./components/AuthModal";
+import { TaskDialog, type TaskDialogPayload } from "./components/TaskDialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog";
 import { useConfigs } from "./hooks/useConfigs";
 import { useTasks } from "./hooks/useTasks";
 import { useDeepSeek } from "./hooks/useDeepSeek";
 import { API_BASE } from "./services/api";
 import { EMPTY_RUN, type ConfigBuffer, type View } from "./types/ui";
-import type { ChatMessage } from "./types/pipeline";
+import type { ChatMessage, TestTask } from "./types/pipeline";
 
 export default function AutoTestWorkbench() {
   const ds = useDeepSeek();
@@ -23,6 +34,10 @@ export default function AutoTestWorkbench() {
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [taskDialogMode, setTaskDialogMode] = useState<"create" | "edit">("create");
+  const [taskDialogTask, setTaskDialogTask] = useState<TestTask | undefined>();
+  const [deleteTarget, setDeleteTarget] = useState<TestTask | undefined>();
   const [chatInput, setChatInput] = useState("");
   const [chatLogs, setChatLogs] = useState<ChatMessage[]>([]);
   const [apiStatus, setApiStatus] = useState<"checking" | "ok" | "down">(
@@ -184,17 +199,21 @@ export default function AutoTestWorkbench() {
 
   /** 鉴权变更：同时写回配置与当前任务，然后重跑 */
   const applyAuth = (patch: Partial<ConfigBuffer>, rerun = true) => {
-    patchBuffer(patch);
-    if (activeConfigId) saveActiveConfig(activeConfigId, patch);
     setShowAuthModal(false);
-    if (activeTask && rerun) {
+    // 有任务时只改该任务快照；没有任务时才写共享配置
+    if (activeTask) {
       const nextConfig = { ...activeTask.config, ...patch };
       taskApi.updateTask(activeTask.id, { config: nextConfig });
-      void taskApi.runTask(activeTask.id, ds.settings, {
-        ...activeTask,
-        config: nextConfig,
-      });
+      if (rerun) {
+        void taskApi.runTask(activeTask.id, ds.settings, {
+          ...activeTask,
+          config: nextConfig,
+        });
+      }
+      return;
     }
+    patchBuffer(patch);
+    if (activeConfigId) saveActiveConfig(activeConfigId, patch);
   };
 
   return (
@@ -204,9 +223,7 @@ export default function AutoTestWorkbench() {
       {view === "run" && (
         <TaskSidebar
           tasks={tasks}
-          configs={configs}
           activeTaskId={activeTaskId}
-          defaultConfigId={activeConfigId}
           onSelect={(id) => {
             setActiveTaskId(id);
             const t = tasks.find((x) => x.id === id);
@@ -217,10 +234,17 @@ export default function AutoTestWorkbench() {
             }
             setView("run");
           }}
-          onCreate={(configId) => {
-            const cfg = configs.find((c) => c.id === configId);
-            if (cfg) taskApi.createTaskFromConfig(cfg, true, ds.settings);
+          onNewTask={() => {
+            setTaskDialogMode("create");
+            setTaskDialogTask(undefined);
+            setTaskDialogOpen(true);
           }}
+          onEditTask={(task) => {
+            setTaskDialogMode("edit");
+            setTaskDialogTask(task);
+            setTaskDialogOpen(true);
+          }}
+          onDeleteTask={(task) => setDeleteTarget(task)}
           onOpenAuth={() => setShowAuthModal(true)}
         />
       )}
@@ -272,6 +296,21 @@ export default function AutoTestWorkbench() {
           onChatInput={setChatInput}
           onSendChat={handleSend}
           onOpenAuth={() => setShowAuthModal(true)}
+          headers={activeTask ? activeTask.config.headers || {} : buffer.headers || {}}
+          onSaveHeaders={async () => {
+            await cfgApi.flushConfigs();
+            await taskApi.flush();
+          }}
+          onHeadersChange={(next: Record<string, string>) => {
+            // 只写当前任务快照，绝不改共享配置（否则会串到其它任务）
+            if (activeTask) {
+              taskApi.updateTask(activeTask.id, {
+                config: { ...activeTask.config, headers: next },
+              });
+              return;
+            }
+            patchBuffer({ headers: next });
+          }}
         />
       )}
 
@@ -311,8 +350,79 @@ export default function AutoTestWorkbench() {
         />
       )}
 
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除任务</AlertDialogTitle>
+            <AlertDialogDescription>
+              确认删除「{deleteTarget?.name}」？该任务的运行记录、反例缓存与聊天上下文会一并移除；
+              后端已生成的报告文件仍保留在磁盘上。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(undefined)}>
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!deleteTarget) return;
+                const rest = tasks.filter((t) => t.id !== deleteTarget.id);
+                taskApi.deleteTask(deleteTarget.id);
+                if (deleteTarget.id === activeTaskId) {
+                  const next = rest[0];
+                  setActiveTaskId(next?.id || "");
+                  const c = next?.configId
+                    ? configs.find((x) => x.id === next.configId)
+                    : undefined;
+                  if (c) {
+                    setActiveConfigId(c.id);
+                    loadConfig(c);
+                  }
+                }
+                setDeleteTarget(undefined);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <TaskDialog
+        open={taskDialogOpen}
+        mode={taskDialogMode}
+        task={taskDialogTask}
+        configs={configs}
+        defaultConfig={activeConfig}
+        onClose={() => setTaskDialogOpen(false)}
+        onSubmit={(payload: TaskDialogPayload, run: boolean) => {
+          if (taskDialogMode === "edit" && taskDialogTask) {
+            const next: TestTask = {
+              ...taskDialogTask,
+              name: payload.name,
+              config: payload.config,
+            };
+            taskApi.updateTask(taskDialogTask.id, {
+              name: payload.name,
+              config: payload.config,
+            });
+            if (run) void taskApi.runTask(taskDialogTask.id, ds.settings, next);
+          } else {
+            taskApi.createTaskSnapshot(payload.name, payload.config, {
+              autoRun: run,
+              deepseek: ds.settings,
+            });
+          }
+          setTaskDialogOpen(false);
+        }}
+      />
+
       {showAuthModal && (
         <AuthModal
+          open={showAuthModal}
           config={activeConfig}
           onClose={() => setShowAuthModal(false)}
           onSaveCookie={(cookie) =>

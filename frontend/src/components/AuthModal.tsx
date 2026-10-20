@@ -1,94 +1,107 @@
 import { useState } from "react";
-import { Cookie, LogIn, X } from "lucide-react";
+import { Cookie, LogIn } from "lucide-react";
 import type { TestConfig } from "../types/pipeline";
-import { inputCls } from "../lib/constants";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Label } from "./ui/label";
+import { Separator } from "./ui/separator";
 
 /** 鉴权配置弹窗：注入 Cookie 或 启用前置登录 */
 export function AuthModal({
+  open,
   config,
   onClose,
   onSaveCookie,
   onSaveLogin,
 }: {
+  open: boolean;
   config?: TestConfig;
   onClose: () => void;
   onSaveCookie: (cookie: string) => void;
-  onSaveLogin: (payload: { param: string; userPhone: string; exhibitionId: string }) => void;
+  onSaveLogin: (payload: {
+    param: string;
+    userPhone: string;
+    exhibitionId: string;
+  }) => void;
 }) {
   const [cookie, setCookie] = useState(config?.cookie || "");
   const [param, setParam] = useState(config?.login?.param || "");
   const [phone, setPhone] = useState(config?.login?.userPhone || "");
-  const [exhibitionId, setExhibitionId] = useState(config?.login?.exhibitionId || "");
+  const [exhibitionId, setExhibitionId] = useState(
+    config?.login?.exhibitionId || ""
+  );
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-lg p-5 shadow-xl space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <Cookie className="w-4 h-4 text-[#1a1a1a]" />
-            <h3 className="text-sm font-bold text-slate-900">
-              项目鉴权与 Cookie 会话配置
-            </h3>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Cookie className="h-4 w-4" /> 项目鉴权与 Cookie 会话配置
+          </DialogTitle>
+          <DialogDescription>
+            配置会写回当前项目配置，并立即用新会话重跑当前任务
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="space-y-4 text-xs">
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1">
-              方式一：直接粘贴浏览器 Cookie（适合有图形验证码 / SSO 的系统）
-            </label>
-            <textarea
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>方式一：直接粘贴浏览器 Cookie</Label>
+            <Textarea
               value={cookie}
               onChange={(e) => setCookie(e.target.value)}
               rows={3}
               placeholder="CPS_SESSION=xxx; XSRF-TOKEN=yyy"
-              className={`${inputCls} font-mono text-[11px]`}
+              className="font-mono"
             />
-            <button
-              onClick={() => onSaveCookie(cookie)}
-              className="mt-2 w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
-            >
+            <Button className="w-full" onClick={() => onSaveCookie(cookie)}>
               注入 Cookie 并立即重跑反例
-            </button>
+            </Button>
           </div>
 
-          <div className="border-t border-slate-100 pt-3 space-y-2">
-            <label className="font-semibold text-slate-700 flex items-center gap-1.5">
-              <LogIn className="w-3.5 h-3.5" /> 方式二：前置登录接口（自动取 token 与会话）
-            </label>
-            <input
+          <Separator />
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <LogIn className="h-3.5 w-3.5" /> 方式二：前置登录接口（自动取 token
+              与会话）
+            </Label>
+            <Input
               value={param}
               onChange={(e) => setParam(e.target.value)}
               placeholder="CPS27 param（可选，如 CPS27EFORM_...）"
-              className={`${inputCls} font-mono text-[11px]`}
+              className="font-mono"
             />
             <div className="grid grid-cols-2 gap-2">
-              <input
+              <Input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="userPhone *"
-                className={inputCls}
               />
-              <input
+              <Input
                 value={exhibitionId}
                 onChange={(e) => setExhibitionId(e.target.value)}
                 placeholder="exhibitionId"
-                className={`${inputCls} font-mono text-[11px]`}
+                className="font-mono"
               />
             </div>
-            <button
-              onClick={() => onSaveLogin({ param, userPhone: phone, exhibitionId })}
+            <Button
+              className="w-full"
               disabled={!phone.trim()}
-              className="w-full py-2 rounded-xl bg-[#1a1a1a] hover:bg-black text-white font-semibold disabled:opacity-40"
+              onClick={() => onSaveLogin({ param, userPhone: phone, exhibitionId })}
             >
               启用前置登录并重跑
-            </button>
+            </Button>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

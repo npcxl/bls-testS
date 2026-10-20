@@ -9,6 +9,7 @@ import type {
 } from "../types/pipeline";
 import type { DeepSeekSettings, TaskRun } from "../types/ui";
 import { EMPTY_RUN } from "../types/ui";
+import { getStore, putStore } from "../services/api";
 import {
   appendCases,
   executePipeline,
@@ -72,6 +73,35 @@ export function useTasks() {
     runsRef.current = runs;
   }, [runs]);
 
+  // 本地数据库（后端 SQLite）：启动时以数据库为准（含反例与报告正文）
+  const hydrated = useRef(false);
+  useEffect(() => {
+    (async () => {
+      const remote = await getStore<TestTask[]>("tasks");
+      if (Array.isArray(remote) && remote.length > 0) {
+        setTasks(remote);
+        persistTasks(remote);
+      } else if (tasks.length > 0) {
+        void putStore("tasks", tasks).catch(() => {});
+      }
+      hydrated.current = true;
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const timer = window.setTimeout(() => {
+      void putStore("tasks", tasks).catch(() => {});
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [tasks]);
+
+  /** 立即落库（手动保存用） */
+  const flush = async () => {
+    await putStore("tasks", tasksRef.current).catch(() => {});
+  };
+
   // runId -> taskId，SSE 事件按任务分发
   const runOwner = useRef<Record<string, string>>({});
   // 正在执行的任务集合（防止重复点击）
@@ -89,6 +119,22 @@ export function useTasks() {
       persistTasks(next);
       return next;
     });
+  }, []);
+
+  /** 删除任务（同时清理它的运行态） */
+  const deleteTask = useCallback((id: string) => {
+    setTasks((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      persistTasks(next);
+      return next;
+    });
+    setRuns((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    runningTasks.current.delete(id);
+    setActiveTaskId((prev) => (prev === id ? "" : prev));
   }, []);
 
   const patchRun = useCallback((taskId: string, patch: Partial<TaskRun>) => {
@@ -236,7 +282,10 @@ export function useTasks() {
               pipeline: {
                 project_name: cfg.projectName,
                 base_url: cfg.baseUrl,
-                global_headers: { "Content-Type": "application/json" },
+                global_headers: {
+                  "Content-Type": "application/json",
+                  ...(cfg.headers || {}),
+                },
                 pre_steps: [],
                 requirements: [],
                 negative_cases: existing,
@@ -251,6 +300,7 @@ export function useTasks() {
               prd_content: cfg.prdText,
               deepseek,
               auth: buildAuth(cfg),
+              extra_headers: cfg.headers,
               run_id: rid,
             });
 
@@ -325,6 +375,33 @@ export function useTasks() {
     [patchRun, runTask, updateTask]
   );
 
+  /** 用显式快照创建任务（弹窗里可改名/改配置） */
+  const createTaskSnapshot = useCallback(
+    (
+      name: string,
+      config: TestTask["config"],
+      opts: { configId?: string; autoRun: boolean; deepseek: DeepSeekSettings }
+    ): TestTask => {
+      const task: TestTask = {
+        id: `task-${Date.now()}`,
+        name: name.trim() || `${config.projectName || "未命名"} · ${new Date().toLocaleTimeString()}`,
+        status: "pending",
+        createdAt: new Date().toLocaleString(),
+        configId: opts.configId,
+        config,
+      };
+      setTasks((prev) => {
+        const next = [task, ...prev].slice(0, 30);
+        persistTasks(next);
+        return next;
+      });
+      setActiveTaskId(task.id);
+      if (opts.autoRun) void runTask(task.id, opts.deepseek, task);
+      return task;
+    },
+    [runTask]
+  );
+
   /** 用某个配置新建任务；autoRun 为 true 时立即执行 */
   const createTaskFromConfig = useCallback(
     (
@@ -373,5 +450,8 @@ export function useTasks() {
     runTask,
     appendCasesToTask,
     createTaskFromConfig,
+    createTaskSnapshot,
+    deleteTask,
+    flush,
   };
 }

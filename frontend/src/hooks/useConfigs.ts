@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TestConfig } from "../types/pipeline";
 import type { ConfigBuffer } from "../types/ui";
 import { EMPTY_LOGIN, SAMPLE_API_SPEC, SAMPLE_PRD } from "../lib/constants";
+import { getStore, putStore } from "../services/api";
 
 const DEFAULT_BUFFER: ConfigBuffer = {
   projectName: "橡塑展",
@@ -11,6 +12,7 @@ const DEFAULT_BUFFER: ConfigBuffer = {
   authMode: "none",
   cookie: "",
   login: { ...EMPTY_LOGIN },
+  headers: { "Content-Type": "application/json" },
 };
 
 function readConfigs(): TestConfig[] {
@@ -35,6 +37,38 @@ export function useConfigs() {
   const [activeConfigId, setActiveConfigId] = useState("");
   const [buffer, setBuffer] = useState<ConfigBuffer>({ ...DEFAULT_BUFFER });
 
+  // 本地数据库（后端 SQLite）：启动时以数据库为准
+  const hydrated = useRef(false);
+  useEffect(() => {
+    (async () => {
+      const remote = await getStore<TestConfig[]>("configs");
+      if (Array.isArray(remote) && remote.length > 0) {
+        setConfigs(remote);
+        persistConfigs(remote);
+        setActiveConfigId(remote[0].id);
+        loadConfig(remote[0]);
+      } else if (configs.length > 0) {
+        void putStore("configs", configs).catch(() => {});
+      }
+      hydrated.current = true;
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 变更后自动落库（防抖 600ms）
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const timer = window.setTimeout(() => {
+      void putStore("configs", configs).catch(() => {});
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [configs]);
+
+  /** 立即落库（手动保存用） */
+  const flushConfigs = async () => {
+    await putStore("configs", configs).catch(() => {});
+  };
+
   const activeConfig = configs.find((c) => c.id === activeConfigId);
 
   const loadConfig = (cfg: TestConfig) => {
@@ -46,6 +80,7 @@ export function useConfigs() {
       authMode: cfg.authMode || "none",
       cookie: cfg.cookie || "",
       login: { ...EMPTY_LOGIN, ...(cfg.login || {}) },
+      headers: cfg.headers || DEFAULT_BUFFER.headers,
     });
   };
 
@@ -95,6 +130,7 @@ export function useConfigs() {
       authMode: "none",
       cookie: "",
       login: { ...EMPTY_LOGIN },
+      headers: { "Content-Type": "application/json" },
     };
     saveConfigs([cfg, ...configs].slice(0, 50));
     setActiveConfigId(cfg.id);
@@ -133,5 +169,6 @@ export function useConfigs() {
     deleteConfig,
     setActiveConfigId,
     setBuffer,
+    flushConfigs,
   };
 }

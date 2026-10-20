@@ -30,6 +30,8 @@ export interface NegativeTestCase {
   body?: unknown;
   expected_status_codes: number[];
   expected_error_hint: string;
+  /** 用例类型：negative（反例，默认）/ positive（正例，正常请求应成功） */
+  case_type?: "negative" | "positive";
 }
 
 export interface TestPipeline {
@@ -60,6 +62,8 @@ export interface CaseExecutionResult {
   request_body?: unknown;
   /** 完整响应体（后端截断到 8KB） */
   response_body?: string;
+  /** 用例类型 */
+  case_type?: string;
   /** 实际请求次数（含重试） */
   attempts?: number;
 }
@@ -128,6 +132,8 @@ export interface TestTaskConfig {
   cookie?: string;
   /** 登录前置参数 */
   login?: TaskLoginConfig;
+  /** 全局请求头（项目级，覆盖模型生成的同名头） */
+  headers?: Record<string, string>;
 }
 
 /** 可复用的配置档案（新建任务时选择它） */

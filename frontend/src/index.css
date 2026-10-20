@@ -40,10 +40,28 @@ body {
   @apply bg-background text-foreground;
 }
 
-/* 报告预览区的表格/代码块更紧凑一点 */
+/* 报告预览区：表格更紧凑、可横向滚动、代码块不撑破布局 */
 .prose table {
   font-size: 12px;
+  border-collapse: collapse;
+}
+.prose th,
+.prose td {
+  border: 1px solid hsl(var(--border));
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.prose thead th {
+  background: hsl(var(--secondary));
+  font-weight: 600;
 }
 .prose code {
   word-break: break-all;
+}
+.prose pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.prose img {
+  max-width: 100%;
 }

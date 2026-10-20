@@ -52,17 +52,45 @@ pub fn generate_markdown_report(
         0.0
     };
 
+    // 正例 / 反例分开统计
+    let is_positive = |r: &CaseExecutionResult| r.case_type.eq_ignore_ascii_case("positive");
+    let positive_total = results.iter().filter(|r| is_positive(r)).count();
+    let positive_passed = results
+        .iter()
+        .filter(|r| is_positive(r) && r.passed)
+        .count();
+    let negative_total = total - positive_total;
+    let negative_passed = passed - positive_passed;
+    let positive_rate = if positive_total > 0 {
+        (positive_passed as f64 / positive_total as f64) * 100.0
+    } else {
+        0.0
+    };
+    let negative_rate = if negative_total > 0 {
+        (negative_passed as f64 / negative_total as f64) * 100.0
+    } else {
+        0.0
+    };
+
     let mut md = String::new();
-    md.push_str(&format!("# {} - 自动化反例测试报告\n\n", pipeline.project_name));
+    md.push_str(&format!("# {} - 自动化测试报告\n\n", pipeline.project_name));
     md.push_str(&format!(
-        "- **生成时间**: {}\n- **目标地址**: `{}`\n- **前置依赖步骤数**: {} 个\n- **总反例数**: {} | **通过**: {} | **失败/未拦截**: {} | **通过率**: {:.1}%\n\n",
+        "- **生成时间**: {}\n- **目标地址**: `{}`\n- **前置依赖步骤数**: {} 个\n- **总用例数**: {}（正例 {} / 反例 {}）| **通过**: {} | **失败**: {} | **通过率**: {:.1}%\n- **正例通过率**: {:.1}%（{}/{}） | **反例拦截率**: {:.1}%（{}/{}）\n\n",
         Local::now().format("%Y-%m-%d %H:%M:%S"),
         pipeline.base_url,
         pipeline.pre_steps.len(),
         total,
+        positive_total,
+        negative_total,
         passed,
         failed,
-        pass_rate
+        pass_rate,
+        positive_rate,
+        positive_passed,
+        positive_total,
+        negative_rate,
+        negative_passed,
+        negative_total
     ));
 
     // 1. 业务测试需求矩阵
@@ -93,16 +121,23 @@ pub fn generate_markdown_report(
         md.push('\n');
     }
 
-    // 3. 反例执行总览表
-    md.push_str("## 三、反例测试用例执行结果汇总\n\n");
-    md.push_str("| 用例 ID | 变异维度 | 用例名称 | 接口 | 预期状态码 | 实际状态码 | 耗时 | 结果 |\n");
-    md.push_str("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
+    // 3. 正例 + 反例执行总览表
+    md.push_str("## 三、测试用例执行结果汇总（正例 + 反例）\n\n");
+    md.push_str("| 用例 ID | 类型 | 分类 | 用例名称 | 接口 | 预期状态码 | 实际状态码 | 耗时 | 结果 |\n");
+    md.push_str("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
     for r in results {
         let badge = if r.passed { "PASS" } else { "FAIL" };
+        let kind = if is_positive(r) { "正例" } else { "反例" };
+        let category = if is_positive(r) {
+            "正常请求".to_string()
+        } else {
+            r.category.clone()
+        };
         md.push_str(&format!(
-            "| `{}` | {} | {} | `{} {}` | `{:?}` | `{}` | {}ms | **{}** |\n",
+            "| `{}` | {} | {} | {} | `{} {}` | `{:?}` | `{}` | {}ms | **{}** |\n",
             r.case_id,
-            r.category,
+            kind,
+            category,
             r.title,
             r.method,
             r.url.trim_start_matches(&pipeline.base_url),

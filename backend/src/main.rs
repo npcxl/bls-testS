@@ -3,13 +3,14 @@ mod db;
 mod models;
 mod services;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::db::PipelineStore;
+use crate::db::{KvStore, PipelineStore};
 use crate::models::pipeline::TestPipeline;
 use crate::services::deepseek::{DeepSeekConfig, DeepSeekService};
 use crate::services::runner::PipelineRunner;
@@ -30,6 +31,8 @@ pub struct AppState {
     pub last_report_file: Arc<RwLock<String>>,
     pub last_summary: Arc<RwLock<String>>,
     pub events: broadcast::Sender<String>,
+    /// 本地 SQLite：保存前端配置、任务、请求头等数据
+    pub kv: Arc<KvStore>,
 }
 
 impl AppState {
@@ -78,6 +81,12 @@ async fn main() {
         println!("已恢复上次的流水线: {}", store_path);
     }
 
+    // 本地 SQLite（保存前端配置/任务/请求头）
+    let kv_path = std::env::var("DATA_DB_PATH").unwrap_or_else(|_| "data/bls.sqlite".to_string());
+    let kv = KvStore::open(std::path::Path::new(&kv_path))
+        .unwrap_or_else(|e| panic!("初始化本地数据库失败: {}", e));
+    println!("本地数据库: {}", kv_path);
+
     let state = AppState {
         default_api_key: Arc::new(api_key),
         default_api_base: Arc::new(api_base),
@@ -90,6 +99,7 @@ async fn main() {
         last_report_file: Arc::new(RwLock::new(String::new())),
         last_summary: Arc::new(RwLock::new(String::new())),
         events,
+        kv: Arc::new(kv),
     };
 
     let cors = CorsLayer::new()
@@ -135,6 +145,13 @@ async fn main() {
             get(api::pipeline::report_download),
         )
         .route("/api/pipeline/events", get(api::pipeline::events))
+        // 本地数据库：配置 / 任务 / 请求头
+        .route("/api/store", get(api::store::list_kv))
+        .route(
+            "/api/store/:key",
+            get(api::store::get_kv).put(api::store::put_kv),
+        )
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .layer(cors)
         .with_state(state);
 

@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::IntoResponse;
@@ -35,6 +35,9 @@ pub struct InitAndRunRequest {
     /// 前端生成的运行 id，用于把 SSE 事件和本次请求对上
     #[serde(default)]
     pub run_id: Option<String>,
+    /// 项目级全局请求头（会合并进流水线，覆盖模型生成的同名头）
+    #[serde(default)]
+    pub extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 /// 登录前置：先调登录接口，按 JSONPath 提取 token，注入全局请求头
@@ -245,6 +248,15 @@ pub async fn init_and_run(
         };
         emit(&state, &run_id, json!({"type": "error", "message": msg}));
         return Err((StatusCode::BAD_GATEWAY, msg));
+    }
+
+    // 项目级全局请求头（配置里手填的优先级最高）
+    if let Some(headers) = &req.extra_headers {
+        for (k, v) in headers {
+            if !k.trim().is_empty() {
+                merged.global_headers.insert(k.clone(), v.clone());
+            }
+        }
     }
 
     apply_auth_headers(&mut merged, req.auth.as_ref(), &state, &run_id).await?;
@@ -1034,8 +1046,24 @@ pub async fn report(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// 下载最近一次落盘的 `.md` 报告（附件形式）
-pub async fn report_download(State(state): State<AppState>) -> impl IntoResponse {
-    let file_name = state.last_report_file.read().await.clone();
+pub async fn report_download(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    // 支持 ?file=xxx.md 下载指定的历史报告；不传则回退到最近一次
+    let requested = params
+        .get("file")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let file_name = match requested {
+        Some(raw) => raw
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        None => state.last_report_file.read().await.clone(),
+    };
     if file_name.is_empty() {
         return (StatusCode::NOT_FOUND, "尚未生成报告文件".to_string()).into_response();
     }
@@ -1049,7 +1077,9 @@ pub async fn report_download(State(state): State<AppState>) -> impl IntoResponse
             );
             headers.insert(
                 header::CONTENT_DISPOSITION,
-                "attachment; filename=\"report.md\"".parse().unwrap(),
+                format!("attachment; filename=\"{}\"", file_name)
+                    .parse()
+                    .unwrap(),
             );
             (StatusCode::OK, headers, md).into_response()
         }

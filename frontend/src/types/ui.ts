@@ -44,6 +44,7 @@ export interface ConfigBuffer {
   authMode: TaskAuthMode;
   cookie: string;
   login: TaskLoginConfig;
+  headers: Record<string, string>;
 }
 
 export interface DeepSeekSettings {

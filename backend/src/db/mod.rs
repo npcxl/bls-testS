@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::models::pipeline::TestPipeline;
 
+pub mod kv;
+pub use kv::KvStore;
+
 /// 按项目维度持久化 TestPipeline。
 ///
 /// 当前落地为「JSON 文件存储」（零外部依赖、可直接跑）：

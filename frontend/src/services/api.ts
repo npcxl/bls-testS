@@ -31,6 +31,7 @@ export function initAndRun(payload: {
   prd_content: string;
   deepseek?: DeepSeekConfig;
   auth?: AuthConfig;
+  extra_headers?: Record<string, string>;
   run_id?: string;
 }) {
   return postJson<InitAndRunResponse>("/api/pipeline/init-and-run", payload);
@@ -70,6 +71,27 @@ export function chatRefine(
     instruction,
     deepseek,
     run_id: runId,
+  });
+}
+
+/** 本地数据库（后端 SQLite）：读取某个 key */
+export async function getStore<T>(key: string): Promise<T | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/store/${key}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as T | null;
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 本地数据库（后端 SQLite）：整份写入 */
+export async function putStore(key: string, value: unknown): Promise<void> {
+  await fetch(`${API_BASE}/api/store/${key}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
   });
 }
 
