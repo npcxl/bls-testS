@@ -140,14 +140,14 @@ export function CaseMatrix({
                 key={c.case_id}
                 onClick={() => onSelect(c.case_id)}
                 className={`px-4 py-3 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
-                  active ? "bg-indigo-50/70" : "hover:bg-slate-50"
+                  active ? "bg-slate-50" : "hover:bg-slate-50"
                 }`}
               >
                 <div className="flex items-start gap-3 min-w-0">
                   <span
                     className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shrink-0 ${
                       c.method === "POST"
-                        ? "bg-indigo-100 text-indigo-700"
+                        ? "bg-slate-200 text-[#1a1a1a]"
                         : "bg-sky-100 text-sky-700"
                     }`}
                   >
@@ -235,7 +235,7 @@ export function CaseMatrix({
       <div className="w-[42%] bg-white border border-slate-200/90 rounded-2xl flex flex-col overflow-hidden shadow-sm">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
           <div className="flex items-center gap-2 min-w-0">
-            <Terminal className="w-4 h-4 text-indigo-600 shrink-0" />
+            <Terminal className="w-4 h-4 text-[#1a1a1a] shrink-0" />
             <span className="text-xs font-bold text-slate-800 truncate">
               {selected ? `${selected.case_id} · 报文与复现检查器` : "报文与复现检查器"}
             </span>
@@ -297,7 +297,7 @@ export function CaseMatrix({
               <div>
                 <div className="text-[11px] font-semibold text-slate-500 mb-1 flex justify-between">
                   <span>变异请求体 (Mutated Request Body)</span>
-                  <span className="font-mono text-indigo-600">
+                  <span className="font-mono text-[#1a1a1a]">
                     {selected.method} {selected.path}
                   </span>
                 </div>

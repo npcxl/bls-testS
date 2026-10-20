@@ -25,7 +25,7 @@ export function AuthModal({
       <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-lg p-5 shadow-xl space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
-            <Cookie className="w-4 h-4 text-indigo-600" />
+            <Cookie className="w-4 h-4 text-[#1a1a1a]" />
             <h3 className="text-sm font-bold text-slate-900">
               项目鉴权与 Cookie 会话配置
             </h3>
@@ -82,7 +82,7 @@ export function AuthModal({
             <button
               onClick={() => onSaveLogin({ param, userPhone: phone, exhibitionId })}
               disabled={!phone.trim()}
-              className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold disabled:opacity-40"
+              className="w-full py-2 rounded-xl bg-[#1a1a1a] hover:bg-black text-white font-semibold disabled:opacity-40"
             >
               启用前置登录并重跑
             </button>

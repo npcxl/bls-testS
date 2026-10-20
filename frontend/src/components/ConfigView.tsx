@@ -65,7 +65,7 @@ export function ConfigView({
             <button
               onClick={onRun}
               disabled={disabled}
-              className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm disabled:opacity-50 flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-md bg-[#1a1a1a] hover:bg-black text-white text-sm disabled:opacity-50 flex items-center gap-1.5"
             >
               <Play className="w-4 h-4" /> 用此配置执行
             </button>
@@ -109,7 +109,7 @@ export function ConfigView({
                 )}
                 <button
                   onClick={() => apiFileRef.current?.click()}
-                  className="text-[11px] text-indigo-600 border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded flex items-center gap-1"
+                  className="text-[11px] text-[#1a1a1a] border border-slate-300 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1"
                 >
                   <Upload className="w-3 h-3" /> 导入文件
                 </button>

@@ -29,7 +29,7 @@ export function EmptyState({
       {canRun && (
         <button
           onClick={onRun}
-          className="mt-4 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1.5"
+          className="mt-4 px-3 py-1.5 rounded-md bg-[#1a1a1a] hover:bg-black text-white text-xs flex items-center gap-1.5"
         >
           <Play className="w-3.5 h-3.5" /> 开始执行
         </button>

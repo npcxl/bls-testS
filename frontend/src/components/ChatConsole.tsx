@@ -32,13 +32,13 @@ export function ChatConsole({
               key={idx}
               className={`flex items-start gap-2 text-xs px-3 py-1.5 rounded-xl ${
                 log.role === "assistant"
-                  ? "bg-indigo-50/70 text-slate-800 border border-indigo-100"
+                  ? "bg-slate-50 text-slate-800 border border-slate-200"
                   : "bg-slate-100 text-slate-700"
               }`}
             >
               <Sparkles
                 className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${
-                  log.role === "assistant" ? "text-indigo-600" : "text-slate-400"
+                  log.role === "assistant" ? "text-[#1a1a1a]" : "text-slate-400"
                 }`}
               />
               <div className="flex-1 leading-relaxed">
@@ -80,9 +80,9 @@ export function ChatConsole({
           <button
             onClick={() => onSend("补充一条光地展位面积小于最小限制的业务反例")}
             disabled={disabled}
-            className="px-2.5 py-1 rounded-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-indigo-700 text-[11px] font-medium flex items-center gap-1 disabled:opacity-50"
+            className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-300 text-[#1a1a1a] text-[11px] font-medium flex items-center gap-1 disabled:opacity-50"
           >
-            <Plus className="w-3 h-3 text-indigo-600" />
+            <Plus className="w-3 h-3 text-[#1a1a1a]" />
             ③ 追加「光地面积小于 36㎡」反例
           </button>
         </div>
@@ -94,12 +94,12 @@ export function ChatConsole({
             onKeyDown={(e) => e.key === "Enter" && onSend()}
             disabled={disabled}
             placeholder="继续用自然语言说出接下来的测试需求，如：再加一些支付回调的越权场景…"
-            className="flex-1 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:outline-none text-xs text-slate-800 disabled:opacity-60"
+            className="flex-1 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:border-[#1a1a1a] focus:bg-white focus:outline-none text-xs text-slate-800 disabled:opacity-60"
           />
           <button
             onClick={() => onSend()}
             disabled={disabled}
-            className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+            className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-[#1a1a1a] text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 disabled:opacity-50"
           >
             <Send className="w-3.5 h-3.5" /> 发送指令
           </button>

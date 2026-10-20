@@ -149,7 +149,7 @@ export function RunView({
           <button
             onClick={onRun}
             disabled={run.status === "running" || (!task && !configId)}
-            className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm shadow-indigo-500/20"
+            className="px-3.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-black disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm shadow-black/10"
           >
             {run.status === "running" ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -174,13 +174,13 @@ export function RunView({
           />
 
           {task?.config?.authMode && task.config.authMode !== "none" && (
-            <div className="mx-5 mt-1 mb-1 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-900 via-slate-900 to-slate-900 text-white flex items-center justify-between shadow-sm">
+            <div className="mx-5 mt-1 mb-1 px-4 py-2 rounded-xl bg-gradient-to-r from-[#1a1a1a] via-[#1a1a1a] to-[#2a2a2a] text-white flex items-center justify-between shadow-sm">
               <div className="flex items-center gap-3 text-xs min-w-0">
                 <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] shrink-0">
                   PRE-HOOK ACTIVE
                 </span>
                 <span className="font-medium truncate">{auth.label}</span>
-                <span className="font-mono text-indigo-300 text-[11px] truncate">
+                <span className="font-mono text-slate-300 text-[11px] truncate">
                   {endpoint}
                 </span>
               </div>

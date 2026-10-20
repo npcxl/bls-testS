@@ -33,7 +33,7 @@ export function ModeButton({
       onClick={onClick}
       className={`px-3 py-1.5 rounded-md border text-xs flex items-center gap-1.5 ${
         active
-          ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+          ? "border-[#1a1a1a] bg-[#1a1a1a] text-white"
           : "border-slate-200 text-slate-600 hover:bg-slate-50"
       }`}
     >
@@ -47,7 +47,7 @@ type TagTone = "slate" | "indigo" | "amber" | "emerald" | "rose";
 
 const TAG_TONE: Record<TagTone, string> = {
   slate: "bg-white text-slate-500 border-slate-200",
-  indigo: "bg-indigo-50 text-indigo-600 border-indigo-200",
+  indigo: "bg-slate-100 text-[#1a1a1a] border-slate-300",
   amber: "bg-amber-50 text-amber-600 border-amber-200",
   emerald: "bg-emerald-50 text-emerald-600 border-emerald-200",
   rose: "bg-rose-50 text-rose-600 border-rose-200",

@@ -19,7 +19,7 @@ export function StatsBar({
       value: total,
       color: "text-slate-900",
       icon: <Layers className="w-4 h-4" />,
-      iconCls: "bg-indigo-50 text-indigo-600",
+      iconCls: "bg-slate-100 text-[#1a1a1a]",
     },
     {
       label: "符合预期拦截 (PASS)",

@@ -17,7 +17,7 @@ export function ConfigSidebar({
       <div className="px-3 py-3 border-b border-slate-200">
         <button
           onClick={onCreate}
-          className="w-full px-3 py-1.5 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-600 text-xs flex items-center justify-center gap-1 hover:bg-indigo-100"
+          className="w-full px-3 py-1.5 rounded-md border border-slate-300 bg-slate-100 text-[#1a1a1a] text-xs flex items-center justify-center gap-1 hover:bg-slate-200"
         >
           <Plus className="w-3.5 h-3.5" /> 新建配置
         </button>
@@ -34,7 +34,7 @@ export function ConfigSidebar({
             onClick={() => onSelect(c)}
             className={`w-full text-left px-3 py-2 border-l-2 ${
               c.id === activeConfigId
-                ? "border-indigo-500 bg-indigo-50/60"
+                ? "border-[#1a1a1a]/40 bg-slate-50"
                 : "border-transparent hover:bg-slate-50"
             }`}
           >

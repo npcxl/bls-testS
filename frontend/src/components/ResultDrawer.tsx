@@ -64,7 +64,7 @@ export function ResultDrawer({
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-200 font-mono">
+            <span className="px-2 py-0.5 rounded bg-slate-100 text-[#1a1a1a] border border-slate-300 font-mono">
               {result.method}
             </span>
             <span className="font-mono text-slate-600 break-all">{result.url}</span>

@@ -33,9 +33,9 @@ export const CATEGORY_STYLE: Record<string, string> = {
   BoundaryOverflow: "bg-orange-50 text-orange-600 border-orange-200",
   NullValue: "bg-sky-50 text-sky-600 border-sky-200",
   SecurityInjection: "bg-purple-50 text-purple-600 border-purple-200",
-  BusinessLogicViolation: "bg-indigo-50 text-indigo-600 border-indigo-200",
+  BusinessLogicViolation: "bg-slate-100 text-[#1a1a1a] border-slate-300",
   AuthBypass: "bg-slate-100 text-slate-600 border-slate-300",
 };
 
 export const inputCls =
-  "w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400";
+  "w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/15 focus:border-[#1a1a1a]";

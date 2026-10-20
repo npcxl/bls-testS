@@ -50,7 +50,7 @@ export function TaskSidebar({
                   onCreate(configId);
                   setCreating(false);
                 }}
-                className="flex-1 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-40"
+                className="flex-1 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-black text-white text-xs font-medium disabled:opacity-40"
               >
                 创建并执行
               </button>
@@ -68,7 +68,7 @@ export function TaskSidebar({
               setCreating(true);
               setConfigId(defaultConfigId || configs[0]?.id || "");
             }}
-            className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-sm"
+            className="w-full py-2 px-3 rounded-lg bg-[#1a1a1a] hover:bg-black text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" /> 新建反例测试任务
           </button>
@@ -103,7 +103,7 @@ export function TaskSidebar({
               onClick={() => onSelect(task.id)}
               className={`p-3 rounded-xl border transition-all cursor-pointer ${
                 active
-                  ? "bg-indigo-50/60 border-indigo-500/40 shadow-sm ring-1 ring-indigo-500/20"
+                  ? "bg-slate-50 border-[#1a1a1a]/30 shadow-sm ring-1 ring-[#1a1a1a]/10"
                   : "bg-white border-slate-200/70 hover:border-slate-300 hover:bg-slate-50/60"
               }`}
             >
@@ -153,12 +153,12 @@ export function TaskSidebar({
       {/* Cookie 监控 */}
       <div className="p-3 m-2.5 rounded-xl bg-slate-900 text-slate-100 space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold flex items-center gap-1.5 text-indigo-300">
+          <span className="text-[11px] font-semibold flex items-center gap-1.5 text-slate-300">
             <Cookie className="w-3.5 h-3.5" /> 会话 Cookie 监控
           </span>
           <button
             onClick={onOpenAuth}
-            className="text-[10px] px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white"
+            className="text-[10px] px-2 py-0.5 rounded bg-[#1a1a1a] hover:bg-black text-white"
           >
             配置鉴权
           </button>
