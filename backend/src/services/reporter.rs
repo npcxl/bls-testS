@@ -45,7 +45,17 @@ pub fn generate_markdown_report(
 ) -> String {
     let total = results.len();
     let passed = results.iter().filter(|r| r.passed).count();
-    let failed = total.saturating_sub(passed);
+    let blocked = results.iter().filter(|r| r.outcome == "blocked").count();
+    let errored = results.iter().filter(|r| r.outcome == "error").count();
+    let inconclusive = results
+        .iter()
+        .filter(|r| r.outcome == "inconclusive")
+        .count();
+    // 失败 = 真正违反预期的断言失败（不含 blocked / error / inconclusive）
+    let failed = results
+        .iter()
+        .filter(|r| !r.passed && r.outcome == "failed")
+        .count();
     let pass_rate = if total > 0 {
         (passed as f64 / total as f64) * 100.0
     } else {
@@ -75,7 +85,7 @@ pub fn generate_markdown_report(
     let mut md = String::new();
     md.push_str(&format!("# {} - 自动化测试报告\n\n", pipeline.project_name));
     md.push_str(&format!(
-        "- **生成时间**: {}\n- **目标地址**: `{}`\n- **前置依赖步骤数**: {} 个\n- **总用例数**: {}（正例 {} / 反例 {}）| **通过**: {} | **失败**: {} | **通过率**: {:.1}%\n- **正例通过率**: {:.1}%（{}/{}） | **反例拦截率**: {:.1}%（{}/{}）\n\n",
+        "- **生成时间**: {}\n- **目标地址**: `{}`\n- **前置依赖步骤数**: {} 个\n- **总用例数**: {}（正例 {} / 反例 {}）| **通过**: {} | **失败**: {} | **通过率**: {:.1}%\n- **正例通过率**: {:.1}%（{}/{}） | **反例拦截率**: {:.1}%（{}/{}）\n- **分类**: 断言失败 {} | 前置阻断 {} | 执行异常 {} | 无法判定 {}\n\n",
         Local::now().format("%Y-%m-%d %H:%M:%S"),
         pipeline.base_url,
         pipeline.pre_steps.len(),
@@ -90,7 +100,11 @@ pub fn generate_markdown_report(
         positive_total,
         negative_rate,
         negative_passed,
-        negative_total
+        negative_total,
+        failed,
+        blocked,
+        errored,
+        inconclusive
     ));
 
     // 1. 业务测试需求矩阵
@@ -126,7 +140,20 @@ pub fn generate_markdown_report(
     md.push_str("| 用例 ID | 类型 | 分类 | 用例名称 | 接口 | 预期状态码 | 实际状态码 | 耗时 | 结果 |\n");
     md.push_str("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
     for r in results {
-        let badge = if r.passed { "PASS" } else { "FAIL" };
+        let badge = match r.outcome.as_str() {
+            "passed" => "PASS",
+            "failed" => "**FAIL**",
+            "blocked" => "BLOCKED",
+            "error" => "ERROR",
+            "inconclusive" => "INCONCLUSIVE",
+            _ => {
+                if r.passed {
+                    "PASS"
+                } else {
+                    "FAIL"
+                }
+            }
+        };
         let kind = if is_positive(r) { "正例" } else { "反例" };
         let category = if is_positive(r) {
             "正常请求".to_string()

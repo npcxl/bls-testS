@@ -98,6 +98,18 @@ pub async fn init_and_run(
     State(state): State<AppState>,
     Json(req): Json<InitAndRunRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    // 阶段 A：单实例只允许一个运行（F03）
+    let run_key = resolve_run_id(&req.run_id);
+    acquire_run(&state, &run_key).await?;
+    let result = init_and_run_inner(state.clone(), req).await;
+    release_run(&state).await;
+    result
+}
+
+async fn init_and_run_inner(
+    state: AppState,
+    req: InitAndRunRequest,
+) -> Result<Json<Value>, ApiError> {
     if req.base_url.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "base_url 不能为空".to_string()));
     }
@@ -1128,6 +1140,17 @@ pub async fn execute(
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let run_id = resolve_run_id(&req.run_id);
+    acquire_run(&state, &run_id).await?;
+    let result = execute_inner(state.clone(), req).await;
+    release_run(&state).await;
+    result
+}
+
+async fn execute_inner(
+    state: AppState,
+    req: ExecuteRequest,
+) -> Result<Json<Value>, ApiError> {
+    let run_id = resolve_run_id(&req.run_id);
     let mut merged = req.pipeline;
 
     if merged.negative_cases.is_empty() {
@@ -1250,6 +1273,24 @@ pub async fn append_cases(
         "added": added,
         "total": req.existing_cases.len() + added.len(),
     })))
+}
+
+/// 占用运行位；已有运行中任务时返回 409
+async fn acquire_run(state: &AppState, run_id: &str) -> Result<(), ApiError> {
+    let mut slot = state.active_run.lock().await;
+    if let Some(current) = slot.as_ref() {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("已有运行中的任务（{}），请等待完成后再提交", current),
+        ));
+    }
+    *slot = Some(run_id.to_string());
+    Ok(())
+}
+
+async fn release_run(state: &AppState) {
+    let mut slot = state.active_run.lock().await;
+    *slot = None;
 }
 
 fn emit(state: &AppState, run_id: &str, body: Value) {

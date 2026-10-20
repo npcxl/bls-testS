@@ -33,6 +33,8 @@ pub struct AppState {
     pub events: broadcast::Sender<String>,
     /// 本地 SQLite：保存前端配置、任务、请求头等数据
     pub kv: Arc<KvStore>,
+    /// 阶段 A：单实例只允许一个运行（F03 临时限制）
+    pub active_run: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 impl AppState {
@@ -100,6 +102,7 @@ async fn main() {
         last_summary: Arc::new(RwLock::new(String::new())),
         events,
         kv: Arc::new(kv),
+        active_run: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     let cors = CorsLayer::new()

@@ -94,6 +94,10 @@ pub struct NegativeTestCase {
     /// 用例类型：negative（反例，默认）/ positive（正例，验证正常请求能成功）
     #[serde(default, alias = "kind")]
     pub case_type: String,
+    /// 认证模式：inherit（沿用登录态，默认）/ none（匿名，不带 Cookie）
+    /// 不再根据预期状态码推断，避免把“已登录但无权限”误判成匿名用例
+    #[serde(default)]
+    pub auth_mode: String,
 }
 
 impl NegativeTestCase {

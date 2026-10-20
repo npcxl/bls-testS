@@ -26,6 +26,9 @@ pub struct CaseExecutionResult {
     /// 用例类型：negative / positive
     #[serde(default)]
     pub case_type: String,
+    /// 结论：passed / failed / blocked / error / inconclusive
+    #[serde(default)]
+    pub outcome: String,
     /// 实际发出的请求头（已渲染变量）
     #[serde(default)]
     pub request_headers: HashMap<String, String>,
@@ -40,19 +43,33 @@ pub struct CaseExecutionResult {
     pub attempts: u32,
 }
 
-pub struct PipelineRunner {
-    http_client: Client,
+pub struct PipelineRunner;
+
+impl Default for PipelineRunner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PipelineRunner {
     pub fn new() -> Self {
-        // 启用 cookie_store(true)，自动兼容基于 Cookie/Session 的登录态保持
-        let http_client = Client::builder()
+        Self
+    }
+
+    /// 每次执行创建两个独立客户端：
+    /// - authed：带 Cookie Jar，承载登录态
+    /// - anon：无 Cookie Jar，保证匿名用例不会继承会话（F04）
+    fn build_clients() -> Result<(Client, Client), String> {
+        let authed = Client::builder()
             .cookie_store(true)
             .timeout(std::time::Duration::from_secs(15))
             .build()
-            .expect("初始化 HTTP 客户端失败");
-        Self { http_client }
+            .map_err(|e| format!("初始化认证客户端失败: {}", e))?;
+        let anon = Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("初始化匿名客户端失败: {}", e))?;
+        Ok((authed, anon))
     }
 
     /// 执行完整流水线：1. 串行执行前置步骤（如登录） -> 2. 并发执行反例测试
@@ -63,13 +80,20 @@ impl PipelineRunner {
         pipeline: &TestPipeline,
         tx: Option<UnboundedSender<CaseExecutionResult>>,
     ) -> Result<Vec<CaseExecutionResult>, String> {
+        let (authed, anon) = Self::build_clients()?;
         let mut context_vars: HashMap<String, String> = HashMap::new();
+
+        // 是否存在登录态：用于判定 401/403 是「被拦截」还是「用例目标」
+        let auth_configured = pipeline.pre_steps.iter().any(|s| !s.extract_rules.is_empty())
+            || pipeline.global_headers.keys().any(|k| {
+                k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("cookie")
+            });
 
         // 第一步：按顺序执行前置依赖步骤（例如：调用登录接口提取 Token）
         for step in &pipeline.pre_steps {
             let url = format!("{}{}", pipeline.base_url.trim_end_matches('/'), step.path);
             let method = Method::from_bytes(step.method.as_bytes()).unwrap_or(Method::POST);
-            let mut req = self.http_client.request(method, &url);
+            let mut req = authed.request(method, &url);
 
             for (k, v) in &step.headers {
                 let rendered = Self::render_template(v, &context_vars);
@@ -139,17 +163,26 @@ impl PipelineRunner {
         let vars_arc = Arc::new(context_vars);
         let base_url = pipeline.base_url.trim_end_matches('/').to_string();
         let global_headers = pipeline.global_headers.clone();
+        let auth_ok = auth_configured;
 
         let results = stream::iter(pipeline.negative_cases.clone())
             .map(|case| {
-                let client = self.http_client.clone();
+                let client = (authed.clone(), anon.clone());
                 let vars = Arc::clone(&vars_arc);
                 let base = base_url.clone();
                 let g_headers = global_headers.clone();
                 let sender = tx.clone();
                 async move {
-                    let result =
-                        Self::run_single_case(client, &base, &g_headers, &case, &vars).await;
+                    let result = Self::run_single_case(
+                        client.0,
+                        client.1,
+                        &base,
+                        &g_headers,
+                        &case,
+                        &vars,
+                        auth_ok,
+                    )
+                    .await;
                     if let Some(sender) = sender {
                         let _ = sender.send(result.clone());
                     }
@@ -164,11 +197,13 @@ impl PipelineRunner {
     }
 
     async fn run_single_case(
-        client: Client,
+        authed: Client,
+        anon: Client,
         base_url: &str,
         global_headers: &HashMap<String, String>,
         case: &NegativeTestCase,
         vars: &HashMap<String, String>,
+        auth_configured: bool,
     ) -> CaseExecutionResult {
         let raw_path = if case.path.trim().is_empty() {
             "/"
@@ -178,7 +213,6 @@ impl PipelineRunner {
         let rendered_path = Self::render_template(raw_path, vars);
         let mut url = format!("{}{}", base_url, rendered_path);
 
-        // query_params 支持动态变量；值可能是数字/数组/null，统一转成字符串再编码
         if !case.query_params.is_empty() {
             let mut pairs: Vec<String> = Vec::new();
             for (k, v) in &case.query_params {
@@ -193,7 +227,6 @@ impl PipelineRunner {
             url = format!("{}?{}", url, pairs.join("&"));
         }
 
-        // 模型可能不给 method：有 body 视为 POST，否则 GET
         let raw_method = if case.method.trim().is_empty() {
             if case.body.is_some() {
                 "POST"
@@ -203,44 +236,38 @@ impl PipelineRunner {
         } else {
             case.method.trim()
         };
-        let method = Method::from_bytes(raw_method.as_bytes()).unwrap_or(Method::POST);
 
-        // 地址不合法时给出可读原因（否则 reqwest 只报 builder error）
+        // 非法 method 直接拒绝（不猜测成写请求，F16）
+        let method = match Method::from_bytes(raw_method.as_bytes()) {
+            Ok(m) => m,
+            Err(_) => {
+                return Self::build_invalid(
+                    case,
+                    url,
+                    format!("非法 HTTP method: {}", raw_method),
+                )
+            }
+        };
+
         if !url.starts_with("http://") && !url.starts_with("https://") {
-            return CaseExecutionResult {
-                case_id: case.case_id.clone(),
-                category: case.category.clone(),
-                title: case.title.clone(),
-                method: case.method.clone(),
-                url: url.clone(),
-                actual_status: 0,
-                expected_status_codes: case.expected_status_codes.clone(),
-                duration_ms: 0,
-                passed: false,
-                failure_reason: Some(format!(
-                    "URL 非法（缺少 http:// 或 https://）：{}",
-                    url
-                )),
-                curl_reproduce: format!("curl -X {} '{}'", raw_method, url),
-                response_snippet: String::new(),
-                case_type: case.case_type.clone(),
-                request_headers: HashMap::new(),
-                request_body: case.body.clone(),
-                response_body: String::new(),
-                attempts: 0,
-            };
+            return Self::build_invalid(
+                case,
+                url,
+                "URL 非法（缺少 http:// 或 https://）".to_string(),
+            );
         }
 
-        // 组装要发送的请求头（渲染变量、剔除未解析/空值；AuthBypass 摘掉登录态）
+        // 显式认证模式：不再从预期状态码推断
+        let auth_mode = case.auth_mode.to_ascii_lowercase();
+        let is_auth_bypass = case.category.eq_ignore_ascii_case("AuthBypass");
+        let anonymous = auth_mode == "none" || (is_auth_bypass && auth_mode != "inherit");
+
+        let client = if anonymous { anon.clone() } else { authed.clone() };
+
         let mut merged_headers = global_headers.clone();
         for (k, v) in &case.headers {
             merged_headers.insert(k.clone(), v.clone());
         }
-        let strip_auth = case.category.eq_ignore_ascii_case("AuthBypass")
-            || case
-                .expected_status_codes
-                .iter()
-                .any(|c| *c == 401 || *c == 403);
 
         let mut send_headers: Vec<(String, String)> = Vec::new();
         for (k, v) in &merged_headers {
@@ -250,7 +277,7 @@ impl PipelineRunner {
             }
             let is_auth_header =
                 k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("cookie");
-            if strip_auth
+            if anonymous
                 && is_auth_header
                 && !case.headers.keys().any(|hk| hk.eq_ignore_ascii_case(k))
             {
@@ -267,8 +294,9 @@ impl PipelineRunner {
         let allows_body = !matches!(method, Method::GET | Method::HEAD);
         let request_body = if allows_body { rendered_body.clone() } else { None };
 
+        // cURL 基于「实际发送」的头与 body（F16）
         let curl_cmd =
-            Self::build_curl(method.as_str(), &url, &merged_headers, &rendered_body, vars);
+            Self::build_curl(method.as_str(), &url, &request_headers, &request_body, vars);
 
         const MAX_ATTEMPTS: u32 = 3;
         let mut attempts: u32 = 0;
@@ -289,9 +317,33 @@ impl PipelineRunner {
                 Ok(resp) => {
                     let duration_ms = start.elapsed().as_millis();
                     let status = resp.status().as_u16();
-                    let body_text = resp.text().await.unwrap_or_default();
+                    let body_text = match resp.text().await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            // 读取正文失败属于执行异常，不能当成 200 通过（F16）
+                            return CaseExecutionResult {
+                                case_id: case.case_id.clone(),
+                                category: case.category.clone(),
+                                title: case.title.clone(),
+                                method: case.method.clone(),
+                                url,
+                                actual_status: status,
+                                expected_status_codes: case.expected_status_codes.clone(),
+                                duration_ms,
+                                passed: false,
+                                outcome: "error".to_string(),
+                                failure_reason: Some(format!("读取响应正文失败: {}", e)),
+                                curl_reproduce: curl_cmd,
+                                response_snippet: String::new(),
+                                case_type: case.case_type.clone(),
+                                request_headers: request_headers.clone(),
+                                request_body: request_body.clone(),
+                                response_body: String::new(),
+                                attempts,
+                            };
+                        }
+                    };
 
-                    // 5xx 视为服务端异常，自动重试（最多 MAX_ATTEMPTS 次）
                     if status >= 500 && attempts < MAX_ATTEMPTS {
                         last_error = format!("HTTP {}", status);
                         tokio::time::sleep(std::time::Duration::from_millis(
@@ -303,49 +355,8 @@ impl PipelineRunner {
 
                     let snippet: String = body_text.chars().take(300).collect();
                     let full_body: String = body_text.chars().take(8000).collect();
-
-                    let is_server_crash = status >= 500;
-                    let is_positive = case.is_positive();
-                    let status_matched = if case.expected_status_codes.is_empty() {
-                        if is_positive {
-                            (200..300).contains(&status)
-                        } else {
-                            (400..500).contains(&status)
-                        }
-                    } else {
-                        case.expected_status_codes.contains(&status)
-                    };
-                    let business_rejected =
-                        status == 200 && Self::body_is_business_error(&body_text);
-                    // 正例：必须是 2xx 且业务成功；反例：状态码命中或业务被拒
-                    let passed = if is_positive {
-                        !is_server_crash && status_matched && !business_rejected
-                    } else {
-                        !is_server_crash && (status_matched || business_rejected)
-                    };
-
-                    let failure_reason = if is_server_crash {
-                        Some(format!("观察到服务端 5xx（HTTP {}），需定位", status))
-                    } else if is_positive && business_rejected {
-                        Some(format!(
-                            "正例被业务拒绝：HTTP {}，响应体含业务错误码",
-                            status
-                        ))
-                    } else if !status_matched && !business_rejected {
-                        Some(if is_positive {
-                            format!(
-                                "正例未成功：预期状态码 {:?}，实际 HTTP {}",
-                                case.expected_status_codes, status
-                            )
-                        } else {
-                            format!(
-                                "未按预期拦截：预期状态码 {:?}，实际返回 HTTP {}，响应中也无业务错误码",
-                                case.expected_status_codes, status
-                            )
-                        })
-                    } else {
-                        None
-                    };
+                    let (outcome, failure_reason) =
+                        crate::services::assertion::evaluate(case, status, &body_text, auth_configured);
 
                     return CaseExecutionResult {
                         case_id: case.case_id.clone(),
@@ -356,7 +367,8 @@ impl PipelineRunner {
                         actual_status: status,
                         expected_status_codes: case.expected_status_codes.clone(),
                         duration_ms,
-                        passed,
+                        passed: outcome == crate::services::assertion::Outcome::Passed,
+                        outcome: outcome.as_str().to_string(),
                         failure_reason,
                         curl_reproduce: curl_cmd,
                         response_snippet: snippet,
@@ -390,6 +402,7 @@ impl PipelineRunner {
             expected_status_codes: case.expected_status_codes.clone(),
             duration_ms: 0,
             passed: false,
+            outcome: "error".to_string(),
             failure_reason: Some(format!(
                 "网络或超时异常（共尝试 {} 次）: {}",
                 attempts, last_error
@@ -404,7 +417,31 @@ impl PipelineRunner {
         }
     }
 
+    fn build_invalid(case: &NegativeTestCase, url: String, reason: String) -> CaseExecutionResult {
+        CaseExecutionResult {
+            case_id: case.case_id.clone(),
+            category: case.category.clone(),
+            title: case.title.clone(),
+            method: case.method.clone(),
+            url: url.clone(),
+            actual_status: 0,
+            expected_status_codes: case.expected_status_codes.clone(),
+            duration_ms: 0,
+            passed: false,
+            outcome: "error".to_string(),
+            failure_reason: Some(reason),
+            curl_reproduce: format!("curl -X {} '{}'", case.method, url),
+            response_snippet: String::new(),
+            case_type: case.case_type.clone(),
+            request_headers: HashMap::new(),
+            request_body: case.body.clone(),
+            response_body: String::new(),
+            attempts: 0,
+        }
+    }
+
     /// 响应体是否是「业务错误」：兼容 code/errcode 非 0、success=false、resultCode 非 0
+    #[allow(dead_code)]
     fn body_is_business_error(text: &str) -> bool {
         if let Ok(value) = serde_json::from_str::<Value>(text) {
             for key in ["code", "errcode"] {
