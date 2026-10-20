@@ -91,4 +91,13 @@ pub struct NegativeTestCase {
     /// 预期响应体中应包含的错误关键字或业务码描述
     #[serde(default, alias = "expected_error")]
     pub expected_error_hint: String,
+    /// 用例类型：negative（反例，默认）/ positive（正例，验证正常请求能成功）
+    #[serde(default, alias = "kind")]
+    pub case_type: String,
+}
+
+impl NegativeTestCase {
+    pub fn is_positive(&self) -> bool {
+        self.case_type.eq_ignore_ascii_case("positive")
+    }
 }

@@ -151,10 +151,10 @@ export function TaskSidebar({
       </div>
 
       {/* Cookie 监控 */}
-      <div className="p-3 m-2.5 rounded-xl bg-slate-900 text-slate-100 space-y-2">
+      <div className="p-3 m-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold flex items-center gap-1.5 text-slate-300">
-            <Cookie className="w-3.5 h-3.5" /> 会话 Cookie 监控
+          <span className="text-[11px] font-semibold flex items-center gap-1.5 text-slate-600">
+            <Cookie className="w-3.5 h-3.5 text-slate-500" /> 会话 Cookie 监控
           </span>
           <button
             onClick={onOpenAuth}
@@ -167,7 +167,7 @@ export function TaskSidebar({
           {activeTask?.config?.baseUrl || "未配置地址"}
         </div>
         {Object.keys(cookieMap).length === 0 ? (
-          <div className="text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+          <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
             ⚠️ 当前无活跃 Cookie（受保护接口将返回 401）
           </div>
         ) : (
@@ -175,7 +175,7 @@ export function TaskSidebar({
             {Object.entries(cookieMap).map(([k, v]) => (
               <div
                 key={k}
-                className="text-[10px] font-mono bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded truncate"
+                className="text-[10px] font-mono bg-emerald-50 border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded truncate"
               >
                 {k}={v}
               </div>

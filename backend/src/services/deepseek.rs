@@ -50,9 +50,11 @@ impl DeepSeekService {
    - 安全注入试探 (SecurityInjection)：基础 SQL 注入、XSS 标签、路径穿越
    - 业务规则违背 (BusinessLogicViolation)：紧密结合 PRD 中的业务限制（如余额不足、非法状态流转、越权）
    若接口声明了鉴权，再额外补充鉴权绕过（AuthBypass：缺失/伪造/过期 Token）用例。
-3. negative_cases 的 method/path 必须来自接口定义（path 只写路径部分，不含域名），不要编造不存在的接口。
-4. expected_status_codes 必须是该反例「被正确拦截」时应返回的状态码数组（如 [400]、[400,422]、[401]、[403]）。
-5. 严格输出符合下面结构的合法 JSON 对象，**字段名必须完全一致**（不要自造别名），
+3. 同时生成正例（positive_cases）：每个核心接口 1~2 条「合法请求应当成功」的用例，
+   case_type 固定为 "positive"，body/query 使用 PRD 里合法的示例值，expected_status_codes 写 [200] 或 [201]。
+4. negative_cases 的 method/path 必须来自接口定义（path 只写路径部分，不含域名），不要编造不存在的接口。
+5. 反例的 expected_status_codes 必须是「被正确拦截」时应返回的状态码数组（如 [400]、[400,422]、[401]、[403]）。
+6. 严格输出符合下面结构的合法 JSON 对象，**字段名必须完全一致**（不要自造别名），
    pre_steps 初始为空数组，不要包含任何 Markdown 代码块标记或解释性文字。
 
 结构示例：
@@ -256,6 +258,30 @@ fn normalize_pipeline(mut value: Value) -> Value {
     }
     if value.get("negative_cases").is_none() {
         value["negative_cases"] = json!([]);
+    }
+
+    // 正例：并入 negative_cases，用 case_type 区分（negative / positive）
+    let positives = value
+        .as_object_mut()
+        .and_then(|o| o.remove("positive_cases"))
+        .and_then(|v| {
+            if let serde_json::Value::Array(arr) = v {
+                Some(arr)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    if let Some(arr) = value.get_mut("negative_cases").and_then(|v| v.as_array_mut()) {
+        for c in arr.iter_mut() {
+            if c.get("case_type").is_none() {
+                c["case_type"] = json!("negative");
+            }
+        }
+        for mut pos in positives {
+            pos["case_type"] = json!("positive");
+            arr.push(pos);
+        }
     }
 
     // 前置步骤

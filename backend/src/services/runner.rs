@@ -23,6 +23,9 @@ pub struct CaseExecutionResult {
     pub failure_reason: Option<String>,
     pub curl_reproduce: String,
     pub response_snippet: String,
+    /// 用例类型：negative / positive
+    #[serde(default)]
+    pub case_type: String,
     /// 实际发出的请求头（已渲染变量）
     #[serde(default)]
     pub request_headers: HashMap<String, String>,
@@ -220,6 +223,7 @@ impl PipelineRunner {
                 )),
                 curl_reproduce: format!("curl -X {} '{}'", raw_method, url),
                 response_snippet: String::new(),
+                case_type: case.case_type.clone(),
                 request_headers: HashMap::new(),
                 request_body: case.body.clone(),
                 response_body: String::new(),
@@ -301,25 +305,44 @@ impl PipelineRunner {
                     let full_body: String = body_text.chars().take(8000).collect();
 
                     let is_server_crash = status >= 500;
+                    let is_positive = case.is_positive();
                     let status_matched = if case.expected_status_codes.is_empty() {
-                        (400..500).contains(&status)
+                        if is_positive {
+                            (200..300).contains(&status)
+                        } else {
+                            (400..500).contains(&status)
+                        }
                     } else {
                         case.expected_status_codes.contains(&status)
                     };
                     let business_rejected =
                         status == 200 && Self::body_is_business_error(&body_text);
-                    let passed = !is_server_crash && (status_matched || business_rejected);
+                    // 正例：必须是 2xx 且业务成功；反例：状态码命中或业务被拒
+                    let passed = if is_positive {
+                        !is_server_crash && status_matched && !business_rejected
+                    } else {
+                        !is_server_crash && (status_matched || business_rejected)
+                    };
 
                     let failure_reason = if is_server_crash {
+                        Some(format!("观察到服务端 5xx（HTTP {}），需定位", status))
+                    } else if is_positive && business_rejected {
                         Some(format!(
-                            "严重缺陷：反例触发服务端 5xx 崩溃 (HTTP {})",
+                            "正例被业务拒绝：HTTP {}，响应体含业务错误码",
                             status
                         ))
                     } else if !status_matched && !business_rejected {
-                        Some(format!(
-                            "未按预期拦截：预期状态码 {:?}，实际返回 HTTP {}，响应中也无业务错误码",
-                            case.expected_status_codes, status
-                        ))
+                        Some(if is_positive {
+                            format!(
+                                "正例未成功：预期状态码 {:?}，实际 HTTP {}",
+                                case.expected_status_codes, status
+                            )
+                        } else {
+                            format!(
+                                "未按预期拦截：预期状态码 {:?}，实际返回 HTTP {}，响应中也无业务错误码",
+                                case.expected_status_codes, status
+                            )
+                        })
                     } else {
                         None
                     };
@@ -337,6 +360,7 @@ impl PipelineRunner {
                         failure_reason,
                         curl_reproduce: curl_cmd,
                         response_snippet: snippet,
+                        case_type: case.case_type.clone(),
                         request_headers: request_headers.clone(),
                         request_body: request_body.clone(),
                         response_body: full_body,
@@ -372,6 +396,7 @@ impl PipelineRunner {
             )),
             curl_reproduce: curl_cmd,
             response_snippet: String::new(),
+            case_type: case.case_type.clone(),
             request_headers,
             request_body,
             response_body: String::new(),

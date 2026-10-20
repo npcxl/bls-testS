@@ -174,17 +174,17 @@ export function RunView({
           />
 
           {task?.config?.authMode && task.config.authMode !== "none" && (
-            <div className="mx-5 mt-1 mb-1 px-4 py-2 rounded-xl bg-gradient-to-r from-[#1a1a1a] via-[#1a1a1a] to-[#2a2a2a] text-white flex items-center justify-between shadow-sm">
+            <div className="mx-5 mt-1 mb-1 px-4 py-2 rounded-xl bg-white border border-slate-200 flex items-center justify-between shadow-sm">
               <div className="flex items-center gap-3 text-xs min-w-0">
-                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] shrink-0">
-                  PRE-HOOK ACTIVE
+                <span className="px-2 py-0.5 rounded bg-[#1a1a1a] text-white font-mono text-[10px] shrink-0">
+                  PRE-HOOK
                 </span>
-                <span className="font-medium truncate">{auth.label}</span>
-                <span className="font-mono text-slate-300 text-[11px] truncate">
+                <span className="font-medium text-slate-700 truncate">{auth.label}</span>
+                <span className="font-mono text-slate-400 text-[11px] truncate">
                   {endpoint}
                 </span>
               </div>
-              <span className="text-[11px] text-emerald-400 shrink-0">
+              <span className="text-[11px] text-emerald-600 shrink-0">
                 已注入全部 Authenticated 反例
               </span>
             </div>
