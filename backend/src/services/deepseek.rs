@@ -387,7 +387,10 @@ impl DeepSeekService {
 规则：
 1. 不要重复已有用例（相同 path + category + 语义相同的 title 视为重复）。
 2. 新增用例必须落在接口定义里真实存在的接口上。
-3. 严格输出合法 JSON：{"negative_cases": [ ... ]}，字段与已有用例一致：
+3. 如果用户要求补充「正例 / 正常请求 / 合法参数」，请输出到 positive_cases 数组：
+   case_type 固定 "positive"，expected_status_codes 写 [200] 或 [201]；
+   否则输出 negative_cases。两者可同时输出。
+4. 严格输出合法 JSON：{"negative_cases": [ ... ], "positive_cases": [ ... ]}，字段与已有用例一致：
    case_id, req_id, category, title, method, path, headers, query_params, body,
    expected_status_codes, mutation_dimension, is_mutation_rule。
 4. category 只能用：MissingField / InvalidType / BoundaryOverflow / NullValue / SecurityInjection / BusinessLogicViolation / AuthBypass。
@@ -418,11 +421,42 @@ impl DeepSeekService {
 
         let value = self.call_json_value(system_prompt, &user_prompt).await?;
 
-        let list = value
+        let mut list: Vec<serde_json::Value> = value
             .get("negative_cases")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
+
+        let mut positives: Vec<serde_json::Value> = value
+            .get("positive_cases")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        // 用户明确要正例但模型没给：用更严格的 prompt 再要一次
+        let wants_positive = instruction.contains("正例")
+            || instruction.contains("正常请求")
+            || instruction.to_lowercase().contains("positive");
+        if wants_positive && positives.is_empty() {
+            let strict_system = r#"只输出正例（合法请求应当成功）。严格返回 JSON：
+{"positive_cases":[{"case_id":"PC-001","category":"Positive","title":"...","method":"POST","path":"/x","headers":{},"query_params":{},"body":{},"expected_status_codes":[200],"case_type":"positive"}]}
+不要输出解释或 Markdown。"#;
+            if let Ok(second) = self.call_json_value(strict_system, &user_prompt).await {
+                if let Some(arr) = second.get("positive_cases").and_then(|v| v.as_array()) {
+                    positives = arr.clone();
+                }
+            }
+        }
+
+        for mut item in positives {
+            item["case_type"] = serde_json::json!("positive");
+            list.push(item);
+        }
+        for item in list.iter_mut() {
+            if item.get("case_type").is_none() {
+                item["case_type"] = serde_json::json!("negative");
+            }
+        }
 
         let mut added: Vec<crate::models::pipeline::NegativeTestCase> = Vec::new();
         for (idx, item) in list.into_iter().enumerate() {

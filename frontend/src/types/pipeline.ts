@@ -160,6 +160,8 @@ export interface TestTask {
   config: TestTaskConfig;
   /** 任务已生成的反例（只生成一次，重跑直接复用；可追加） */
   cases?: NegativeTestCase[];
+  /** 生成时的流水线快照（含需求与前置步骤，已剔除凭证） */
+  pipeline?: TestPipeline;
   total?: number;
   passed?: number;
   failed?: number;

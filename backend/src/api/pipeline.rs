@@ -302,7 +302,11 @@ async fn apply_auth_headers(
             if let Some(extra) = &auth.extra_headers {
                 for (k, v) in extra {
                     if !k.trim().is_empty() && !v.trim().is_empty() {
-                        merged.global_headers.insert(k.clone(), v.clone());
+                        // 用户显式配置的全局请求头优先，认证注入只做兜底
+                        merged
+                            .global_headers
+                            .entry(k.clone())
+                            .or_insert_with(|| v.clone());
                     }
                 }
             }
@@ -342,10 +346,16 @@ async fn apply_auth_headers(
                     .global_headers
                     .insert(header_name, format!("{}{}", prefix, result.token));
                 if let Some(agency) = result.agency_id.clone() {
-                    merged.global_headers.insert("agency-id".to_string(), agency);
+                    merged
+                        .global_headers
+                        .entry("agency-id".to_string())
+                        .or_insert(agency);
                 }
                 if let Some(tenant) = result.tenant_id.clone() {
-                    merged.global_headers.insert("tenant-id".to_string(), tenant);
+                    merged
+                        .global_headers
+                        .entry("tenant-id".to_string())
+                        .or_insert(tenant);
                 }
                 // /home/** 真正认的是登录会话（JSESSIONID），只带 Authorization 会 401
                 if let Some(cookie) = result.cookie.clone() {
@@ -1249,7 +1259,7 @@ pub async fn append_cases(
     );
 
     let ai = state.deepseek_for(&req.deepseek);
-    let added = ai
+    let raw_added = ai
         .append_negative_cases(
             &req.existing_cases,
             req.instruction.trim(),
@@ -1258,6 +1268,55 @@ pub async fn append_cases(
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    // 统一校验：丢弃不完整/绝对 URL/重复用例，并保证 case_id 唯一
+    let mut seen_ids: std::collections::HashSet<String> =
+        req.existing_cases.iter().map(|c| c.case_id.clone()).collect();
+    let mut seen_sig: std::collections::HashSet<String> = req
+        .existing_cases
+        .iter()
+        .map(|c| {
+            format!(
+                "{}|{}|{}",
+                c.path.trim().to_lowercase(),
+                c.category.to_lowercase(),
+                c.title.trim().to_lowercase()
+            )
+        })
+        .collect();
+
+    let mut added: Vec<NegativeTestCase> = Vec::new();
+    for mut case in raw_added {
+        if case.method.trim().is_empty() || case.path.trim().is_empty() {
+            continue;
+        }
+        // 只允许相对路径，避免模型改写目标域名
+        if case.path.trim().starts_with("http://") || case.path.trim().starts_with("https://") {
+            continue;
+        }
+        let sig = format!(
+            "{}|{}|{}",
+            case.path.trim().to_lowercase(),
+            case.category.to_lowercase(),
+            case.title.trim().to_lowercase()
+        );
+        if seen_sig.contains(&sig) {
+            continue;
+        }
+        if case.case_id.trim().is_empty() || seen_ids.contains(&case.case_id) {
+            case.case_id = format!("NC-ADD-{}", added.len() + 1);
+        }
+        seen_ids.insert(case.case_id.clone());
+        seen_sig.insert(sig);
+        added.push(case);
+    }
+
+    if added.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "模型没有产出可用的新增用例（可能重复或字段不完整），请换更具体的描述".to_string(),
+        ));
+    }
 
     emit(
         &state,
@@ -1275,16 +1334,22 @@ pub async fn append_cases(
     })))
 }
 
-/// 占用运行位；已有运行中任务时返回 409
+/// 占用运行位；已有运行中任务时返回 409。
+/// 若上一条运行超过 10 分钟仍未释放（例如客户端断开导致 future 被丢弃），
+/// 自动回收，避免服务端永久锁死。
 async fn acquire_run(state: &AppState, run_id: &str) -> Result<(), ApiError> {
+    const STALE_SECS: u64 = 10 * 60;
     let mut slot = state.active_run.lock().await;
-    if let Some(current) = slot.as_ref() {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("已有运行中的任务（{}），请等待完成后再提交", current),
-        ));
+    if let Some((current, started)) = slot.as_ref() {
+        if started.elapsed().as_secs() < STALE_SECS {
+            return Err((
+                StatusCode::CONFLICT,
+                format!("已有运行中的任务（{}），请等待完成后再提交", current),
+            ));
+        }
+        eprintln!("[WARN] 回收超时的运行位: {}（超过 {}s）", current, STALE_SECS);
     }
-    *slot = Some(run_id.to_string());
+    *slot = Some((run_id.to_string(), std::time::Instant::now()));
     Ok(())
 }
 

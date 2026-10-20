@@ -95,7 +95,11 @@ export function ChatConsole({
             onChange={(e) => onInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && onSend()}
             disabled={disabled}
-            placeholder="继续用自然语言说出接下来的测试需求，如：再加一些支付回调的越权场景…"
+            placeholder={
+              disabled
+                ? "执行中或未选择任务，完成后可继续追加…"
+                : "用一句话补充用例，如：再加一些支付回调的越权场景…"
+            }
             className="h-9"
           />
           <Button onClick={() => onSend()} disabled={disabled} className="h-9 shrink-0">

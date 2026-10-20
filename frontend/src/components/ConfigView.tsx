@@ -13,6 +13,7 @@ export function ConfigView({
   config,
   buffer,
   patchBuffer,
+  onHeadersChange,
   onSave,
   onRun,
   onDelete,
@@ -20,6 +21,7 @@ export function ConfigView({
   config?: TestConfig;
   buffer: ConfigBuffer;
   patchBuffer: (patch: Partial<ConfigBuffer>) => void;
+  onHeadersChange: (headers: Record<string, string>) => void;
   onSave: () => void;
   onRun: () => void;
   onDelete: () => void;
@@ -37,7 +39,7 @@ export function ConfigView({
     setHeadersError("");
   }, [config?.id]);
 
-  const onHeadersChange = (text: string) => {
+  const handleHeadersText = (text: string) => {
     setHeadersText(text);
     try {
       const parsed = JSON.parse(text || "{}");
@@ -46,7 +48,7 @@ export function ConfigView({
         return;
       }
       setHeadersError("");
-      patchBuffer({ headers: parsed as Record<string, string> });
+      onHeadersChange(parsed as Record<string, string>);
     } catch {
       setHeadersError("JSON 格式错误");
     }
@@ -182,7 +184,7 @@ export function ConfigView({
             </p>
             <Textarea
               value={headersText}
-              onChange={(e) => onHeadersChange(e.target.value)}
+              onChange={(e) => handleHeadersText(e.target.value)}
               className="h-28 font-mono"
               spellCheck={false}
             />

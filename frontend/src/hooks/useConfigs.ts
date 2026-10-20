@@ -65,8 +65,14 @@ export function useConfigs() {
   }, [configs]);
 
   /** 立即落库（手动保存用） */
-  const flushConfigs = async () => {
-    await putStore("configs", configs).catch(() => {});
+  const flushConfigs = async (): Promise<boolean> => {
+    try {
+      await putStore("configs", configs);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
   };
 
   const activeConfig = configs.find((c) => c.id === activeConfigId);

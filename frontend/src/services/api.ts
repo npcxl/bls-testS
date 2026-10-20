@@ -88,11 +88,15 @@ export async function getStore<T>(key: string): Promise<T | null> {
 
 /** 本地数据库（后端 SQLite）：整份写入 */
 export async function putStore(key: string, value: unknown): Promise<void> {
-  await fetch(`${API_BASE}/api/store/${key}`, {
+  const res = await fetch(`${API_BASE}/api/store/${key}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(value),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`保存失败（HTTP ${res.status}）${text ? `: ${text}` : ""}`);
+  }
 }
 
 /** SSE：订阅 AI 解析/执行阶段事件（可选，前端用于展示进度） */

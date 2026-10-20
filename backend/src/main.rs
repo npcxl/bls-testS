@@ -33,8 +33,8 @@ pub struct AppState {
     pub events: broadcast::Sender<String>,
     /// 本地 SQLite：保存前端配置、任务、请求头等数据
     pub kv: Arc<KvStore>,
-    /// 阶段 A：单实例只允许一个运行（F03 临时限制）
-    pub active_run: Arc<tokio::sync::Mutex<Option<String>>>,
+    /// 阶段 A：单实例只允许一个运行（F03 临时限制）；记录开始时间用于超时回收
+    pub active_run: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
 }
 
 impl AppState {
@@ -118,7 +118,7 @@ async fn main() {
                 Json(serde_json::json!({
                     "status": "ok",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "build": "2026-10-20-phaseA",
+                    "build": "2026-10-20-phaseA3",
                     "features": [
                         "deepseek-frontend-config",
                         "pipeline-normalize",

@@ -165,11 +165,73 @@ impl PipelineRunner {
         let global_headers = pipeline.global_headers.clone();
         let auth_ok = auth_configured;
 
-        let results = stream::iter(pipeline.negative_cases.clone())
+        // 正例（基线）先串行执行：先证明“正常请求能成功”，再跑反例，
+        // 避免正反例混在一起并发导致基线失败却无从定位（F07/F13）
+        let (positives, negatives): (Vec<_>, Vec<_>) = pipeline
+            .negative_cases
+            .iter()
+            .cloned()
+            .partition(|c| c.is_positive());
+
+        let mut results: Vec<CaseExecutionResult> = Vec::new();
+
+        if !positives.is_empty() {
+            let baseline = Self::run_batch(
+                positives,
+                1,
+                &authed,
+                &anon,
+                &base_url,
+                &global_headers,
+                &vars_arc,
+                auth_ok,
+                &tx,
+            )
+            .await;
+            let baseline_ok = baseline.iter().any(|r| r.passed);
+            if !baseline_ok {
+                eprintln!("[WARN] 正例基线未通过：依赖它的反例结果需谨慎解读");
+            }
+            results.extend(baseline);
+        }
+
+        if !negatives.is_empty() {
+            let neg = Self::run_batch(
+                negatives,
+                10,
+                &authed,
+                &anon,
+                &base_url,
+                &global_headers,
+                &vars_arc,
+                auth_ok,
+                &tx,
+            )
+            .await;
+            results.extend(neg);
+        }
+
+        Ok(results)
+    }
+
+    /// 按批次执行用例；concurrency=1 即串行
+    #[allow(clippy::too_many_arguments)]
+    async fn run_batch(
+        cases: Vec<NegativeTestCase>,
+        concurrency: usize,
+        authed: &Client,
+        anon: &Client,
+        base_url: &str,
+        global_headers: &HashMap<String, String>,
+        vars: &Arc<HashMap<String, String>>,
+        auth_configured: bool,
+        tx: &Option<UnboundedSender<CaseExecutionResult>>,
+    ) -> Vec<CaseExecutionResult> {
+        stream::iter(cases)
             .map(|case| {
                 let client = (authed.clone(), anon.clone());
-                let vars = Arc::clone(&vars_arc);
-                let base = base_url.clone();
+                let vars = Arc::clone(vars);
+                let base = base_url.to_string();
                 let g_headers = global_headers.clone();
                 let sender = tx.clone();
                 async move {
@@ -180,7 +242,7 @@ impl PipelineRunner {
                         &g_headers,
                         &case,
                         &vars,
-                        auth_ok,
+                        auth_configured,
                     )
                     .await;
                     if let Some(sender) = sender {
@@ -189,11 +251,9 @@ impl PipelineRunner {
                     result
                 }
             })
-            .buffer_unordered(10)
+            .buffer_unordered(concurrency.max(1))
             .collect::<Vec<CaseExecutionResult>>()
-            .await;
-
-        Ok(results)
+            .await
     }
 
     async fn run_single_case(
@@ -298,11 +358,16 @@ impl PipelineRunner {
         let curl_cmd =
             Self::build_curl(method.as_str(), &url, &request_headers, &request_body, vars);
 
-        const MAX_ATTEMPTS: u32 = 3;
+        // 只有幂等语义明确的方法才自动重试：POST/PATCH 可能产生重复写入（F13）
+        let retryable = matches!(
+            method,
+            Method::GET | Method::HEAD | Method::OPTIONS | Method::PUT | Method::DELETE
+        );
+        let max_attempts: u32 = if retryable { 3 } else { 1 };
         let mut attempts: u32 = 0;
         let mut last_error = String::new();
 
-        while attempts < MAX_ATTEMPTS {
+        while attempts < max_attempts {
             attempts += 1;
             let mut req = client.request(method.clone(), &url);
             for (k, v) in &send_headers {
@@ -344,7 +409,7 @@ impl PipelineRunner {
                         }
                     };
 
-                    if status >= 500 && attempts < MAX_ATTEMPTS {
+                    if status >= 500 && attempts < max_attempts {
                         last_error = format!("HTTP {}", status);
                         tokio::time::sleep(std::time::Duration::from_millis(
                             300 * attempts as u64,
@@ -381,7 +446,7 @@ impl PipelineRunner {
                 }
                 Err(e) => {
                     last_error = format!("{}", e);
-                    if attempts < MAX_ATTEMPTS {
+                    if attempts < max_attempts {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             300 * attempts as u64,
                         ))

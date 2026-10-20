@@ -62,6 +62,16 @@ export default function AutoTestWorkbench() {
   } = cfgApi;
 
   const activeTask = tasks.find((t) => t.id === activeTaskId);
+
+  // 有效请求头：任务自身优先；任务为空时回落到所属配置
+  const effectiveHeaders = (() => {
+    const own = activeTask?.config?.headers;
+    if (own && Object.keys(own).length > 0) return own;
+    const bound = activeTask?.configId
+      ? configs.find((c) => c.id === activeTask.configId)
+      : activeConfig;
+    return bound?.headers || own || {};
+  })();
   const activeRun = activeTaskId ? runs[activeTaskId] || EMPTY_RUN : EMPTY_RUN;
   const cases =
     activeRun.cases.length > 0 ? activeRun.cases : activeTask?.cases || [];
@@ -171,7 +181,11 @@ export default function AutoTestWorkbench() {
 
   const handleRun = () => {
     if (activeTask) {
-      void taskApi.runTask(activeTask.id, ds.settings);
+      const effective: TestTask = {
+        ...activeTask,
+        config: { ...activeTask.config, headers: effectiveHeaders },
+      };
+      void taskApi.runTask(activeTask.id, ds.settings, effective);
       return;
     }
     if (!activeConfigId) return;
@@ -188,7 +202,7 @@ export default function AutoTestWorkbench() {
       ...prev,
       { role: "user", content },
     ]);
-    const added = await taskApi.appendCasesToTask(
+    const { added, error, skippedRun } = await taskApi.appendCasesToTask(
       activeTask.id,
       content,
       ds.settings
@@ -197,9 +211,12 @@ export default function AutoTestWorkbench() {
       ...prev,
       {
         role: "assistant",
-        content: added
-          ? `已追加 ${added} 条反例，并用任务内全部反例重新执行。`
-          : "没有追加到新反例，请调整描述或检查 DeepSeek 配置。",
+        content:
+          added > 0
+            ? skippedRun
+              ? `已追加 ${added} 条用例（当前还有运行在进行，完成后点「重跑」即可执行新用例）。`
+              : `已追加 ${added} 条用例，并用任务内全部用例重新执行。`
+            : `追加失败：${error || "未知原因"}`,
       },
     ]);
   };
@@ -238,6 +255,15 @@ export default function AutoTestWorkbench() {
             if (c) {
               setActiveConfigId(c.id);
               loadConfig(c);
+            }
+            // 任务没有请求头（未设置或空对象）时，继承所属配置的请求头；
+            // 已显式配置过的任务保持不变，避免互相污染
+            const ownHeaders = t?.config.headers;
+            const emptyHeaders = !ownHeaders || Object.keys(ownHeaders).length === 0;
+            if (t && emptyHeaders && c?.headers && Object.keys(c.headers).length > 0) {
+              taskApi.updateTask(t.id, {
+                config: { ...t.config, headers: c.headers },
+              });
             }
             setView("run");
           }}
@@ -303,10 +329,39 @@ export default function AutoTestWorkbench() {
           onChatInput={setChatInput}
           onSendChat={handleSend}
           onOpenAuth={() => setShowAuthModal(true)}
-          headers={activeTask ? activeTask.config.headers || {} : buffer.headers || {}}
+          headers={activeTask ? effectiveHeaders : buffer.headers || {}}
+          configHeaders={activeConfig?.headers || {}}
+          onInheritHeaders={() => {
+            if (!activeTask) return;
+            const inherited = activeConfig?.headers || {};
+            taskApi.updateTask(activeTask.id, {
+              config: { ...activeTask.config, headers: inherited },
+            });
+          }}
+          onAddPositive={async () => {
+            if (!activeTask) return;
+            const res = await taskApi.appendCasesToTask(
+              activeTask.id,
+              "为每个核心接口补充合法正例（positive_cases）：使用 PRD 中的合法参数，期望返回 200/201",
+              ds.settings
+            );
+            setChatLogs((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                content:
+                  res.added > 0
+                    ? `已补充 ${res.added} 条用例（含正例），并重新执行。`
+                    : `补充失败：${res.error || "未知原因"}`,
+              },
+            ]);
+          }}
           onSaveHeaders={async () => {
-            await cfgApi.flushConfigs();
-            await taskApi.flush();
+            const okConfigs = await cfgApi.flushConfigs();
+            const okTasks = await taskApi.flush();
+            if (!okConfigs || !okTasks) {
+              throw new Error("保存到本地数据库失败，请检查后端是否运行");
+            }
           }}
           onHeadersChange={(next: Record<string, string>) => {
             // 只写当前任务快照，绝不改共享配置（否则会串到其它任务）
@@ -326,6 +381,10 @@ export default function AutoTestWorkbench() {
           config={activeConfig}
           buffer={buffer}
           patchBuffer={patchBuffer}
+          onHeadersChange={(h: Record<string, string>) => {
+            patchBuffer({ headers: h });
+            if (activeConfigId) saveActiveConfig(activeConfigId, { headers: h });
+          }}
           onSave={() => saveActiveConfig()}
           onRun={() => {
             if (!activeConfigId) return;

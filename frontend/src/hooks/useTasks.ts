@@ -5,6 +5,7 @@ import type {
   PipelineEvent,
   RunHistoryItem,
   TestConfig,
+  TestPipeline,
   TestTask,
 } from "../types/pipeline";
 import type { DeepSeekSettings, TaskRun } from "../types/ui";
@@ -18,6 +19,16 @@ import {
 } from "../services/api";
 import { buildAuth } from "../lib/auth";
 import { friendlyError } from "../lib/errors";
+
+/** 落库前剔除凭证，避免 token/Cookie 进入任务快照与 AI/报告（F05） */
+function sanitizePipeline(p: TestPipeline): TestPipeline {
+  const safeHeaders = Object.fromEntries(
+    Object.entries(p.global_headers || {}).filter(
+      ([k]) => !/^(authorization|cookie)$/i.test(k.trim())
+    )
+  );
+  return { ...p, global_headers: safeHeaders };
+}
 
 function readTasks(): TestTask[] {
   try {
@@ -98,8 +109,14 @@ export function useTasks() {
   }, [tasks]);
 
   /** 立即落库（手动保存用） */
-  const flush = async () => {
-    await putStore("tasks", tasksRef.current).catch(() => {});
+  const flush = async (): Promise<boolean> => {
+    try {
+      await putStore("tasks", tasksRef.current);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
   };
 
   // runId -> taskId，SSE 事件按任务分发
@@ -277,6 +294,8 @@ export function useTasks() {
 
       try {
         // 已有反例 → 只执行，不再调用 AI；否则首轮生成
+        // 复用执行要带上前置步骤/需求快照，否则报告里需求矩阵与登录链路会缺失
+        const saved = task.pipeline;
         const data = reuse
           ? await executePipeline({
               pipeline: {
@@ -284,10 +303,11 @@ export function useTasks() {
                 base_url: cfg.baseUrl,
                 global_headers: {
                   "Content-Type": "application/json",
+                  ...(saved?.global_headers || {}),
                   ...(cfg.headers || {}),
                 },
-                pre_steps: [],
-                requirements: [],
+                pre_steps: saved?.pre_steps || [],
+                requirements: saved?.requirements || [],
                 negative_cases: existing,
               },
               auth: buildAuth(cfg),
@@ -308,9 +328,15 @@ export function useTasks() {
           ? data.pipeline.negative_cases
           : existing;
 
+        // 断流补偿：HTTP 返回的 results 是事实来源，SSE 只负责增量
+        const finalResults = Array.isArray(data.results) && data.results.length > 0
+          ? data.results
+          : runsRef.current[taskId]?.results || [];
+
         patchRun(taskId, {
           status: "done",
           cases: finalCases,
+          results: finalResults,
           markdown: data.markdown_report,
           reportFile: data.report_file || "",
           total: data.total_cases,
@@ -318,6 +344,7 @@ export function useTasks() {
         });
         updateTask(taskId, {
           cases: finalCases,
+          pipeline: sanitizePipeline(data.pipeline),
           status: "done",
           total: data.total_cases,
           passed: data.passed,
@@ -347,10 +374,22 @@ export function useTasks() {
       taskId: string,
       instruction: string,
       deepseek: DeepSeekSettings
-    ): Promise<number> => {
+    ): Promise<{ added: number; error?: string; skippedRun?: boolean }> => {
       const task = tasksRef.current.find((t) => t.id === taskId);
-      if (!task || !instruction.trim()) return 0;
+      if (!task) return { added: 0, error: "找不到当前任务" };
+      if (!instruction.trim()) return { added: 0, error: "追加描述为空" };
+
       const cfg = task.config;
+      if (!cfg.apiSpec?.trim() && !cfg.prdText?.trim()) {
+        return {
+          added: 0,
+          error: "该任务没有接口定义（API JSON）或 PRD，无法生成新反例。请先在「配置」里补充。",
+        };
+      }
+      if (!cfg.baseUrl?.trim()) {
+        return { added: 0, error: "该任务没有配置 Base URL，无法执行。" };
+      }
+
       patchRun(taskId, { stageMsg: "正在追加反例…" });
       try {
         const res = await appendCases({
@@ -360,16 +399,28 @@ export function useTasks() {
           existing_cases: task.cases || [],
           deepseek,
         });
+        if (!res.added || res.added.length === 0) {
+          return {
+            added: 0,
+            error:
+              "DeepSeek 没有返回新增用例（可能描述过于笼统，或与已有用例重复）。换个更具体的场景试试。",
+          };
+        }
         const merged = [...(task.cases || []), ...res.added];
         updateTask(taskId, { cases: merged });
         patchRun(taskId, { cases: merged });
-        // 追加后重跑（此时走 execute，不再让 AI 重新生成）
+        // 当前有运行在进行：先只追加，避免撞上单运行闸门
+        if (runningTasks.current.has(taskId)) {
+          return { added: res.added.length, skippedRun: true };
+        }
+        // 追加后重跑（走 execute，不再让 AI 重新生成）
         await runTask(taskId, deepseek, { ...task, cases: merged });
-        return res.added.length;
+        return { added: res.added.length };
       } catch (e) {
-        patchRun(taskId, { status: "error", stageMsg: friendlyError(e) });
-        updateTask(taskId, { error: friendlyError(e) });
-        return 0;
+        const msg = friendlyError(e);
+        patchRun(taskId, { status: "error", stageMsg: msg });
+        updateTask(taskId, { error: msg });
+        return { added: 0, error: msg };
       }
     },
     [patchRun, runTask, updateTask]
@@ -423,6 +474,7 @@ export function useTasks() {
           authMode: cfg.authMode,
           cookie: cfg.cookie,
           login: cfg.login,
+          headers: cfg.headers || {},
         },
       };
       setTasks((prev) => {
