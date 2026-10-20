@@ -1,0 +1,300 @@
+{
+  "project": "橡塑展参展商前台（eoss-plastic 全量接口）",
+  "base_url": "http://10.12.1.25:48997",
+  "global_headers": { "Content-Type": "application/json" },
+  "note": "【CPS27 身份链路】前端入口是 {域名}/?param=CPS27EFORM_{CID}_{TIMEKEY}_{EQTIMEKEY}：① GET /login/getBaseInfo?param=… 返回 basicInfo/booth/agencyId/tenantId；② POST /login/syncLogin 必须带同一个 param（服务端靠它匹配展位，缺了会返回 code=1「未匹配到参展商信息」）；③ 从 syncLogin 取 $.token，后续 /home/** 带 Authorization: Bearer {{token}}。登录前置建议：先 getBaseInfo 提取 $.basicInfo.companyId、$.booth.exnum、$.basicInfo.exhibitionId，再传给 syncLogin。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/login/getBaseInfo",
+      "summary": "CPS27 免登入口：取展商资料 + 展位 + 已绑定账号（匿名）",
+      "auth": "none",
+      "query": {
+        "param": "string, required, CPS27EFORM_{CID}_{TIMEKEY}_{EQTIMEKEY}（前端链接里的 param，直接复制整段）",
+        "exhibitionId": "string, required, 展会id",
+        "ShowID": "string, optional",
+        "Type": "string, optional",
+        "Lang": "string, optional"
+      },
+      "business_rules": [
+        "param 过期或格式错误：返回 code=1「登录失败或登录链接已过期」",
+        "param 与展会不匹配：返回 code=1「未匹配到参展商信息」"
+      ],
+      "responses": {
+        "200": "agencyId、tenantId、basicInfo{companyId,boothNo,exhibitionId,exhibitorCompanyName,exhibitorContactName,exhibitorPhone,exhibitorEmail,userCompanyName,hall,area}、booth{id,exnum}、boundUsers[]、exhibitionProject{id,exhibitionName}",
+        "400": "参数缺失",
+        "500": "取展商资料失败"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/login/syncLogin",
+      "summary": "注册或登录：手机号已存在则直接登录，不存在则注册（匿名）",
+      "auth": "none",
+      "body": {
+        "userPhone": "string, required, 手机号（登录名）",
+        "param": "string, required, 与 getBaseInfo 相同的 CPS27 param；服务端优先用它匹配展位（缺失时退回 boothNo / userPhone / email 匹配）",
+        "code": "string, optional, param 的别名字段",
+        "companyId": "string, optional, 建议传；可从 getBaseInfo 的 $.basicInfo.companyId 取",
+        "boothNo": "string, optional, 建议传；可从 getBaseInfo 的 $.booth.exnum 取",
+        "exhibitionId": "string, required, 可从 $.basicInfo.exhibitionId 取",
+        "expoId": "string, required, 一般与 exhibitionId 相同",
+        "cps27": "object, optional, eForm 原报文（CompanyID/BoothNo/Hall/ChineseName/EnglishName/ContactName/ContactTel/ContactEmail/DisplayArea/Standfitting）",
+        "userName": "string, optional, 负责人姓名",
+        "exhibitorContactName": "string, optional",
+        "userCompanyName": "string, optional, 用户填写公司（不落展商表）",
+        "exhibitorCompanyName": "string, optional, 主办方报文公司",
+        "englishCompanyName": "string, optional",
+        "exhibitorPhone": "string, optional",
+        "companyPhone": "string, optional",
+        "exhibitorEmail": "string, optional",
+        "userEmail": "string, optional",
+        "hall": "string, optional",
+        "area": "number, optional"
+      },
+      "business_rules": [
+        "userPhone 必填，作为登录名",
+        "param / boothNo / userPhone / userEmail 至少要有一个能匹配到展位，否则返回 code=1「未匹配到参展商信息」",
+        "手机号已存在：本次邮箱必须与已绑定邮箱一致，否则拒绝",
+        "邮箱已被其它手机号绑定：拒绝",
+        "新账号 tenant_id=358，agency_id=展会所属机构"
+      ],
+      "responses": {
+        "200": "token（JWT）、agencyId、tenantId、basicInfo、booth、exhibitionProject；业务失败为 HTTP 200 + code=1 + msg",
+        "400": "参数或业务校验失败"
+      }
+    },
+
+    {
+      "method": "GET",
+      "path": "/home/homePage",
+      "summary": "首页聚合：展会信息、联系方式、条款、资料下载、楣板/租赁截止时间",
+      "auth": "JWT",
+      "query": { "expoId": "string, optional", "exhibitionId": "string, optional（二者传一个）" },
+      "responses": { "200": "首页数据", "401": "未登录或 token 失效" }
+    },
+    {
+      "method": "GET",
+      "path": "/home/getOrder",
+      "summary": "订单详情",
+      "auth": "JWT",
+      "query": { "id": "int, required, 订单id", "lang": "string, optional" },
+      "responses": { "200": "订单详情", "400": "id 缺失", "401": "未登录" }
+    },
+    {
+      "method": "GET",
+      "path": "/home/getOrderList",
+      "summary": "我的订单列表（分页）",
+      "auth": "JWT",
+      "query": {
+        "expoId": "string, optional（会映射到 exhibitionId）",
+        "exhibitionId": "string, optional",
+        "status": "string, optional, 订单状态",
+        "exhibitionName": "string, optional",
+        "pageNo": "int, optional",
+        "pageSize": "int, optional"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/home/getGoods",
+      "summary": "商品列表（按展位类型过滤 + 分页，offset 为行偏移从 0 开始）",
+      "auth": "JWT",
+      "query": {
+        "exhibitionId": "string, required",
+        "boothId": "string, required",
+        "materialType": "string, optional",
+        "keyword": "string, optional",
+        "excludeType": "string, optional",
+        "offset": "int, required, 0 起",
+        "limit": "int, optional"
+      },
+      "business_rules": ["只返回启用(is_enable=0)且库存>0的商品", "offset 负数应被拒绝或纠正"]
+    },
+    {
+      "method": "GET",
+      "path": "/home/listMaterialType",
+      "summary": "该展位可租的商品类型列表",
+      "auth": "JWT",
+      "query": { "boothId": "string, required", "exhibitionId": "string, required" }
+    },
+    {
+      "method": "POST",
+      "path": "/home/submitOrder",
+      "summary": "提交订单（购物车流程）",
+      "auth": "JWT",
+      "body": {
+        "shopCartVos": "array, required, 每项 {goodsId, buyNum(>=1), boothId, exNum, exhibitionId}",
+        "orderLineVO": "object, required, {exhibitionId, phone, userName, message}",
+        "replaceOrder": "string, optional",
+        "tradeWay": "int, optional, 缺省线下汇款"
+      },
+      "business_rules": ["shopCartVos 非空", "buyNum 不得为 0/负数/超库存", "一次提交只生成一笔订单，不得混入其它展位残留商品"],
+      "responses": { "200": "订单号+金额", "400": "参数或业务校验失败", "401": "未登录" }
+    },
+
+    {
+      "method": "GET",
+      "path": "/home/listFascias",
+      "summary": "楣板/会刊资料列表（按展会+展位+类型）",
+      "auth": "JWT",
+      "query": { "expoId": "string, optional", "exhibitionId": "string, optional", "boothId": "string, optional" },
+      "responses": { "400": "展会参数不能为空" }
+    },
+    {
+      "method": "POST",
+      "path": "/home/saveBookletOrFascia",
+      "summary": "保存楣板 / 会刊资料",
+      "auth": "JWT",
+      "body": {
+        "boothId": "string, required",
+        "exhibitionId": "string, required",
+        "exhibitor": "string, optional, 中文公司名",
+        "exhibitorEn": "string, optional, 英文公司名",
+        "其他字段": "optional, 见 Conference 实体"
+      },
+      "responses": { "400": "boothId / exhibitionId 为空" }
+    },
+
+    {
+      "method": "GET",
+      "path": "/home/getPayWays",
+      "summary": "可用支付方式",
+      "auth": "JWT",
+      "query": { "exhibitionId": "string, required", "replaceOrder": "string, optional" },
+      "responses": { "400": "exhibitionId 不能为空" }
+    },
+    {
+      "method": "POST",
+      "path": "/home/payOrder",
+      "summary": "发起支付",
+      "auth": "JWT",
+      "body": { "payWays": "array, required", "orderNumber": "string, optional", "exhibitionId": "string, optional" },
+      "responses": { "400": "payWays 不能为空" }
+    },
+    {
+      "method": "POST",
+      "path": "/home/printPayment",
+      "summary": "打印/下载付款通知单（文件流）",
+      "auth": "JWT",
+      "query": { "requestNum": "string, required", "lang": "string, optional" },
+      "responses": { "200": "PDF/文件流", "400": "requestNum 缺失" }
+    },
+
+    {
+      "method": "POST",
+      "path": "/invoice/apply/getExList",
+      "summary": "可开票的展位/展商列表",
+      "auth": "JWT",
+      "query": { "exhibitionId": "string, required" }
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply/selectApplyInvoiceOrderList",
+      "summary": "可开票订单列表",
+      "auth": "JWT",
+      "query": {
+        "exhibitionId": "string, required",
+        "exnumIdList": "string, optional, 逗号分隔",
+        "boothIdList": "string, optional, 逗号分隔"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/invoice/apply/selectOrderListByOrderHeaderId",
+      "summary": "按订单查可开票明细",
+      "auth": "JWT",
+      "query": {
+        "exhibitionId": "string, required",
+        "orderHeaderId": "string, required",
+        "orderLineId": "string, optional"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply/checkCode",
+      "summary": "校验汇款码（线下汇款核销）",
+      "auth": "JWT",
+      "query": {
+        "orderHeaderId": "int, required",
+        "remitCode": "string, required",
+        "checkRemitCode": "string, required"
+      },
+      "responses": { "400": "orderHeaderId 为空 / 汇款码不一致" }
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply/invoiceCount",
+      "summary": "开票统计（按主体+展会）",
+      "auth": "JWT",
+      "query": { "entityId": "int, optional, 不传按展会主体", "exhibitionId": "string, required" }
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply/getSysConfigByKey",
+      "summary": "取系统配置（发票相关开关/阈值）",
+      "auth": "JWT",
+      "query": { "key": "string, required", "exhibitionId": "string, optional" },
+      "responses": { "400": "key 缺失" }
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply/image/remove",
+      "summary": "删除发票附件图片",
+      "auth": "JWT",
+      "query": { "dataId": "string, required", "type": "string, required, 合法图片类型枚举" },
+      "responses": { "400": "type 非法" }
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply",
+      "summary": "提交开票申请",
+      "auth": "JWT",
+      "body": {
+        "订单/金额字段": "required, 见 InvoiceHeader",
+        "invoiceType": "string, required, 普票/专票",
+        "title": "string, required, 发票抬头",
+        "taxNo": "string, required（专票）",
+        "bank": "string, optional",
+        "account": "string, optional",
+        "address": "string, optional",
+        "phone": "string, optional",
+        "email": "string, optional, 电子发票接收邮箱"
+      },
+      "business_rules": ["专票必填税号/开户行/账号/地址/电话", "金额不得为 0 或负数"]
+    },
+    {
+      "method": "POST",
+      "path": "/invoice/apply/uploadImg",
+      "summary": "上传发票附件（multipart）",
+      "auth": "JWT",
+      "content_type": "multipart/form-data",
+      "form": {
+        "file": "file, required",
+        "invoiceImgType": "string, optional",
+        "imgType": "string, optional",
+        "dataId": "string, optional"
+      }
+    },
+
+    {
+      "method": "GET",
+      "path": "/a/api/manualFile/downloadByType",
+      "summary": "参展商手册下载（ehs 共用接口）",
+      "auth": "paramEhsAgencyId 机构参数",
+      "query": {
+        "id": "string, required, manual_file.data_id",
+        "srcType": "string, required, 固定 exhibitorManualFile（小写）",
+        "paramEhsAgencyId": "string, required, 展会所属机构id"
+      },
+      "responses": { "200": "文件流", "500": "srcType 非法（传了枚举名会 NPE）" }
+    },
+    {
+      "method": "GET",
+      "path": "/a/manualFile/manualFiles",
+      "summary": "参展商手册列表（ehs 共用接口）",
+      "auth": "none",
+      "query": { "exhibitionId": "string, required" }
+    }
+  ]
+}
